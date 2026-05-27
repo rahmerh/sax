@@ -8,6 +8,12 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::{Component, Path, PathBuf};
 use std::process;
 
+use bzip2::read::BzDecoder;
+use flate2::read::GzDecoder;
+use tar::EntryType;
+use xz2::read::XzDecoder;
+use zstd::stream::read::Decoder as ZstdDecoder;
+
 type SaxResult<T> = Result<T, Box<dyn Error + Send + Sync>>;
 
 const VERSION: &str = "0.1.0";
@@ -105,6 +111,11 @@ fn extract_archive(path: &Path, out: &Path) -> SaxResult<()> {
 
     match detect_archive_type(path)? {
         ArchiveType::Zip => extract_zip(path, out),
+        ArchiveType::Tar => extract_tar(File::open(path)?, out),
+        ArchiveType::TarGz => extract_tar(GzDecoder::new(File::open(path)?), out),
+        ArchiveType::TarXz => extract_tar(XzDecoder::new(File::open(path)?), out),
+        ArchiveType::TarBz2 => extract_tar(BzDecoder::new(File::open(path)?), out),
+        ArchiveType::TarZst => extract_tar(ZstdDecoder::new(File::open(path)?)?, out),
         other => Err(format!("unsupported archive type: {other:?}").into()),
     }
 }
@@ -134,6 +145,39 @@ fn extract_zip(path: &Path, out: &Path) -> SaxResult<()> {
 
         let mode = entry.unix_mode().unwrap_or(0o644);
         write_file_from_reader(&out_path, mode, &mut entry)?;
+    }
+
+    Ok(())
+}
+
+fn extract_tar<R>(reader: R, out: &Path) -> SaxResult<()>
+where
+    R: Read,
+{
+    let mut archive = tar::Archive::new(reader);
+
+    for entry in archive.entries()? {
+        let mut entry = entry?;
+        let entry_path = entry.path()?.into_owned();
+        let out_path = safe_join(out, &entry_path)
+            .map_err(|err| format!("unsafe TAR path '{}': {err}", entry_path.display()))?;
+        let entry_type = entry.header().entry_type();
+        let mode = entry.header().mode().unwrap_or(0o644);
+
+        match entry_type {
+            EntryType::Directory => {
+                fs::create_dir_all(&out_path)?;
+                set_permissions(&out_path, mode)?;
+            }
+            EntryType::Regular => {
+                if let Some(parent) = out_path.parent() {
+                    fs::create_dir_all(parent)?;
+                }
+
+                write_file_from_reader(&out_path, mode, &mut entry)?;
+            }
+            _ => {}
+        }
     }
 
     Ok(())
@@ -210,6 +254,8 @@ fn safe_join(base: &Path, rel: &Path) -> SaxResult<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use flate2::Compression;
+    use flate2::write::GzEncoder;
     use std::io::Write;
     use tempfile::TempDir;
     use zip::write::SimpleFileOptions;
@@ -307,6 +353,42 @@ mod tests {
     }
 
     #[test]
+    fn extract_archive_extracts_tar_files_into_output_directory() {
+        let dir = TempDir::new().unwrap();
+        let archive_path = dir.path().join("a.tar");
+        let out_dir = dir.path().join("out");
+
+        create_tar(
+            &archive_path,
+            &[("root.txt", "hello"), ("nested/inner.txt", "world")],
+        );
+
+        extract_archive(&archive_path, &out_dir).unwrap();
+
+        assert_file(&out_dir.join("root.txt"), "hello");
+        assert_file(&out_dir.join("nested").join("inner.txt"), "world");
+    }
+
+    #[test]
+    fn extract_archive_extracts_tar_gz_files_into_output_directory() {
+        let dir = TempDir::new().unwrap();
+        let tar_path = dir.path().join("a.tar");
+        let archive_path = dir.path().join("a.tar.gz");
+        let out_dir = dir.path().join("out");
+
+        create_tar(
+            &tar_path,
+            &[("root.txt", "hello"), ("nested/inner.txt", "world")],
+        );
+        create_gzip(&tar_path, &archive_path);
+
+        extract_archive(&archive_path, &out_dir).unwrap();
+
+        assert_file(&out_dir.join("root.txt"), "hello");
+        assert_file(&out_dir.join("nested").join("inner.txt"), "world");
+    }
+
+    #[test]
     fn extract_archive_fails_when_archive_does_not_exist() {
         let dir = TempDir::new().unwrap();
         let err = extract_archive(&dir.path().join("missing.zip"), &dir.path().join("out"))
@@ -333,6 +415,33 @@ mod tests {
         }
 
         archive.finish().unwrap();
+    }
+
+    fn create_tar(path: &Path, entries: &[(&str, &str)]) {
+        let file = File::create(path).unwrap();
+        let mut archive = tar::Builder::new(file);
+
+        for (name, content) in entries {
+            let mut header = tar::Header::new_gnu();
+            header.set_path(name).unwrap();
+            header.set_mode(0o644);
+            header.set_size(content.len() as u64);
+            header.set_cksum();
+            archive
+                .append(&header, content.as_bytes())
+                .expect("append tar entry");
+        }
+
+        archive.finish().unwrap();
+    }
+
+    fn create_gzip(input_path: &Path, output_path: &Path) {
+        let input = fs::read(input_path).unwrap();
+        let output = File::create(output_path).unwrap();
+        let mut encoder = GzEncoder::new(output, Compression::default());
+
+        encoder.write_all(&input).unwrap();
+        encoder.finish().unwrap();
     }
 
     fn assert_file(path: &Path, want: &str) {
