@@ -1,5 +1,9 @@
 # `sax`
 
+![License](https://img.shields.io/github/license/rahmerh/sax)
+[![Crates.io](https://img.shields.io/crates/v/sax)](https://crates.io/crates/sax)
+[![Publish crate](https://github.com/rahmerh/sax/actions/workflows/publish.yml/badge.svg)](https://github.com/rahmerh/sax/actions/workflows/publish.yml)
+
 A simple but *s*mart *a*rchiving and e*x*traction tool.
 
 Will automatically detect archive type and extract correctly, you no longer need to google tar flags.
