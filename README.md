@@ -1,4 +1,4 @@
-# sax
+# `sax`
 
 A simple but *s*mart *a*rchiving and e*x*traction tool.
 
@@ -8,10 +8,10 @@ sax is developed for linux only, I have no interest into testing targets I don't
 
 ## Installation
 
-### From source
+### From crates.io
 
 ```bash
-cargo install --git https://github.com/rahmerh/sax
+cargo install sax
 ```
 
 ## Usage
