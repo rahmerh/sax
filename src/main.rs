@@ -117,7 +117,7 @@ fn extract_archive(path: &Path, out: &Path) -> SaxResult<()> {
         ArchiveType::TarBz2 => extract_tar(BzDecoder::new(File::open(path)?), out),
         ArchiveType::TarZst => extract_tar(ZstdDecoder::new(File::open(path)?)?, out),
         ArchiveType::SevenZip => extract_7z(path, out),
-        other => Err(format!("unsupported archive type: {other:?}").into()),
+        ArchiveType::Rar => extract_rar(path, out),
     }
 }
 
@@ -187,6 +187,13 @@ where
 fn extract_7z(path: &Path, out: &Path) -> SaxResult<()> {
     sevenz_rust::decompress_file(path, out)
         .map_err(|err| format!("failed to extract 7z archive: {err}").into())
+}
+
+fn extract_rar(path: &Path, out: &Path) -> SaxResult<()> {
+    unrar_ng::Archive::new(path)
+        .open_for_processing()?
+        .extract_all(out)?;
+    Ok(())
 }
 
 fn write_file_from_reader(path: &Path, mode: u32, reader: &mut dyn Read) -> SaxResult<()> {
@@ -262,6 +269,7 @@ mod tests {
     use super::*;
     use flate2::Compression;
     use flate2::write::GzEncoder;
+    use sha1::{Digest, Sha1};
     use std::io::Write;
     use tempfile::TempDir;
     use zip::write::SimpleFileOptions;
@@ -415,6 +423,25 @@ mod tests {
     }
 
     #[test]
+    fn extract_archive_extracts_rar_files_into_output_directory() {
+        let dir = TempDir::new().unwrap();
+        let archive_path = dir.path().join("test.part01.rar");
+        let out_dir = dir.path().join("out");
+
+        create_fixture_archive(&archive_path, TEST_RAR_PART_1);
+        create_fixture_archive(&dir.path().join("test.part02.rar"), TEST_RAR_PART_2);
+
+        extract_archive(&archive_path, &out_dir).unwrap();
+
+        let got = fs::read(out_dir.join("test.txt")).unwrap();
+        let digest = Sha1::digest(&got);
+        assert_eq!(
+            format!("{digest:x}"),
+            "4da7f88f69b44a3fdb705667019a65f4c6e058a3"
+        );
+    }
+
+    #[test]
     fn extract_archive_fails_when_archive_does_not_exist() {
         let dir = TempDir::new().unwrap();
         let err = extract_archive(&dir.path().join("missing.zip"), &dir.path().join("out"))
@@ -470,7 +497,45 @@ mod tests {
         encoder.finish().unwrap();
     }
 
+    fn create_fixture_archive(path: &Path, encoded: &str) {
+        fs::write(path, decode_base64(encoded)).unwrap();
+    }
+
+    fn decode_base64(input: &str) -> Vec<u8> {
+        let mut out = Vec::new();
+        let mut buffer = 0u32;
+        let mut bits = 0u8;
+
+        for byte in input.bytes() {
+            let value = match byte {
+                b'A'..=b'Z' => byte - b'A',
+                b'a'..=b'z' => byte - b'a' + 26,
+                b'0'..=b'9' => byte - b'0' + 52,
+                b'+' => 62,
+                b'/' => 63,
+                b'=' => break,
+                b'\n' | b'\r' | b'\t' | b' ' => continue,
+                other => panic!("invalid base64 byte {other}"),
+            } as u32;
+
+            buffer = (buffer << 6) | value;
+            bits += 6;
+
+            if bits >= 8 {
+                bits -= 8;
+                out.push((buffer >> bits) as u8);
+                buffer &= (1 << bits) - 1;
+            }
+        }
+
+        out
+    }
+
     fn assert_file(path: &Path, want: &str) {
         assert_eq!(fs::read_to_string(path).unwrap(), want);
     }
+
+    const TEST_RAR_PART_1: &str = "UmFyIRoHAQBt4SgnCwEFBwEGAQGAgIAAEP5UsygCEwvhhgAEv8UApIMC4JlDmoADAQh0ZXN0LnR4dAoDEyO9GGi6v4cPz7QlBEVUMzUFU/JQNHL7mGuFIr5z/J6B4bcvXfL11LjidU6p04HF6D3xMapGjQBCKOxFtYcNiyPkggDd6gOAjCMD/5QACQANA/frHrT1r6z629b+uPXPrr1jyJ3Fx3Gx3Hx3Ix3Jx3Kxx+bmdzdJp5RtpNJpNJpNJpNZrNfPaW1ms1ms1mszMzMz5yLZmZmZmZtNptNpt588ttNptNpvN5vN5vN/PrbbzebzicTicTicTjzpluJxOZzOZzOZzOZz52u3M6nU6nU6nU6nU6nXgL7BnvsG++w899hHvsKe+wn32HvvsK++wt782/0bXeDjwc+D94OvB/8Hfg87Hvc7zb6TSaTSaTSaTSaTWazWazWazWazWazMzMzMzMzMzMzM2m02m02m36/jzH6fj57+I+n9jaf8f2/p5j+//juvx83/+x/K7g/r/v7r/pp/T/jDv+/PW/fbg+Ly9rzeMC+MDeMD+MEeME+MHvGCvGD/jBf1gz6wb4w8+sI+sKfWE/WHv1hX6wt9YX+sMeMM97r7QxMTExMTExMTE0mk0mk0mk0mk0mk1ms1ms1ms1ms1mszMzMzMzMzMzMzNptNptNptNptNptN5vN5vN5vN5vN5vOJxOJxOJxOJxOJxOZzOZzOZzOZzOZzOp1Op1Op1Op1Op5fOJiYmJiYmJiYn+vwF13j7QxMTExMTExMTy+cTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTE7yBBiIECBAgQIECBAgQIECBAgQIFdp8Wutda611rrXWutdYECBAgRpBGk0mk0mk0hpECBAgQIECBAgQIECBAgQIECBAgQIECBAgQIECBAgV2vxa611rrXWutda611gRiCBAg1iBAgQI1msFbzLPx9oazWazWeXygQIECBAgQIECBAgQIECBAgQIECBAgQIECBXZ+LXWutda611rrXWusCBAgQIECBAgQIECBAjMzMwRmZmZmGYgQIECBAgQIECBAgQIECBAgQIECBArtvi11rrXWutda611rrAgRiCBBtECBAgQIECBAgQIECBG02m02m0NvL52m07y+0BAgQIECBAgQIECBAgQIECBArt/i11rrXWutda611rrAgQIECBAgQIECBAgQIECBAgQIECBAgQIItHUSYDBQQBAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==";
+
+    const TEST_RAR_PART_2: &str = "UmFyIRoHAQCpwsTKDAEFBwMBBgEBgICAAKB9hWAoAgsLyIEABL/FAKSDApFhDOCAAwEIdGVzdC50eHQKAxMjvRhour+HD0G8QbxAgQIECBAgQIECBAgV3Hxa611rrXWutda611gQIEYgg4iBAgQIECBAgQIECBAgQIECBAgQIECBAgQI45+5faHM8vlAgQIOIgQIECu5+LXWutda611rrXWusCBAgQIECBAgQIECBAgQIECBAgQIECBAgQIECBAgQIECBAg5nfgfmBAgQdRXWutda611rrXWusCBAgRiHUQIECBAgQIECBAgQIECBAgQIECBAgQIECBAgQIECDqdTqdTqdTqdTqdTrr5dvOWHXdWUQMFBAA=";
 }
