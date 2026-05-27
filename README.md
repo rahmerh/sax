@@ -12,6 +12,15 @@ sax is developed for linux only, I have no interest into testing targets I don't
 
 ## Installation
 
+### From the AUR
+
+Arch users can install the [`sax-git`](https://aur.archlinux.org/packages/sax-git)
+package with an AUR helper such as [`yay`](https://github.com/Jguer/yay):
+
+```bash
+yay -S sax-git
+```
+
 ### From crates.io
 
 ```bash
