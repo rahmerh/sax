@@ -1,9 +1,8 @@
 use std::ffi::OsStr;
 use std::fs::{self, File};
 use std::io::{self, Read};
-#[cfg(unix)]
-use std::os::unix::fs::PermissionsExt;
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use bzip2::read::BzDecoder;
 use flate2::read::GzDecoder;
@@ -11,6 +10,11 @@ use tar::EntryType;
 use thiserror::Error;
 use xz2::read::XzDecoder;
 use zstd::stream::read::Decoder as ZstdDecoder;
+
+use crate::fs_utils::{
+    UnsafePathError, move_dir_contents, safe_join, set_permissions, single_child_dir_or_self,
+    write_file_from_reader,
+};
 
 #[derive(Debug, Error)]
 pub enum ExtractError {
@@ -20,6 +24,18 @@ pub enum ExtractError {
     UnsupportedArchiveType { path: PathBuf },
     #[error("failed to create output directory '{path}': {source}")]
     CreateOutputDir {
+        path: PathBuf,
+        #[source]
+        source: io::Error,
+    },
+    #[error("failed to read output directory '{path}': {source}")]
+    ReadOutputDir {
+        path: PathBuf,
+        #[source]
+        source: io::Error,
+    },
+    #[error("could not handle files in staging directory '{path}': {source}")]
+    MoveStagedFiles {
         path: PathBuf,
         #[source]
         source: io::Error,
@@ -41,16 +57,6 @@ pub enum ExtractError {
     Rar(#[from] unrar_ng::error::UnrarError),
 }
 
-#[derive(Debug, Error)]
-pub enum UnsafePathError {
-    #[error("empty paths are not allowed")]
-    Empty,
-    #[error("absolute paths are not allowed")]
-    Absolute,
-    #[error("path traversal ('..') is not allowed")]
-    Traversal,
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ArchiveType {
     Zip,
@@ -63,7 +69,11 @@ enum ArchiveType {
     Rar,
 }
 
-pub fn extract_archive(path: &Path, out: &Path, flatten: bool) -> Result<(), ExtractError> {
+pub fn extract_archive(
+    path: &Path,
+    out: &Path,
+    strip_top_level_dir: bool,
+) -> Result<(), ExtractError> {
     if !path.exists() {
         return Err(ExtractError::ArchiveDoesNotExist {
             path: path.to_path_buf(),
@@ -75,9 +85,38 @@ pub fn extract_archive(path: &Path, out: &Path, flatten: bool) -> Result<(), Ext
         source,
     })?;
 
-    if flatten {}
+    if strip_top_level_dir {
+        let ts = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
 
-    extract_archive_to(path, out)
+        let staging_dir = out.join(format!(".extract-{ts}-staging"));
+        fs::create_dir_all(&staging_dir).map_err(|source| ExtractError::CreateOutputDir {
+            path: out.to_path_buf(),
+            source,
+        })?;
+
+        extract_archive_to(path, &staging_dir)?;
+
+        let source_dir = single_child_dir_or_self(&staging_dir).map_err(|source| {
+            ExtractError::ReadOutputDir {
+                path: staging_dir.to_path_buf(),
+                source,
+            }
+        })?;
+
+        move_dir_contents(&source_dir, out).map_err(|source| ExtractError::MoveStagedFiles {
+            path: source_dir,
+            source,
+        })?;
+
+        fs::remove_dir_all(&staging_dir)?;
+
+        Ok(())
+    } else {
+        extract_archive_to(path, out)
+    }
 }
 
 fn extract_archive_to(path: &Path, out: &Path) -> Result<(), ExtractError> {
@@ -176,21 +215,6 @@ fn extract_rar(path: &Path, out: &Path) -> Result<(), ExtractError> {
     Ok(())
 }
 
-fn write_file_from_reader(
-    path: &Path,
-    mode: u32,
-    reader: &mut dyn Read,
-) -> Result<(), ExtractError> {
-    let mut file = File::create(path)?;
-    io::copy(reader, &mut file)?;
-    set_permissions(path, mode)?;
-    Ok(())
-}
-
-fn set_permissions(path: &Path, mode: u32) -> io::Result<()> {
-    fs::set_permissions(path, fs::Permissions::from_mode(mode & 0o777))
-}
-
 fn detect_archive_type(path: &Path) -> Result<ArchiveType, ExtractError> {
     let name = path
         .file_name()
@@ -215,34 +239,6 @@ fn detect_archive_type(path: &Path) -> Result<ArchiveType, ExtractError> {
 
 pub fn is_archive(path: &Path) -> bool {
     path.exists() && detect_archive_type(path).is_ok()
-}
-
-fn safe_join(base: &Path, rel: &Path) -> Result<PathBuf, UnsafePathError> {
-    if rel.as_os_str().is_empty() {
-        return Err(UnsafePathError::Empty);
-    }
-
-    if rel.is_absolute() {
-        return Err(UnsafePathError::Absolute);
-    }
-
-    let mut clean = PathBuf::new();
-    for component in rel.components() {
-        match component {
-            Component::Normal(part) => clean.push(part),
-            Component::CurDir => {}
-            Component::ParentDir => return Err(UnsafePathError::Traversal),
-            Component::RootDir | Component::Prefix(_) => {
-                return Err(UnsafePathError::Absolute);
-            }
-        }
-    }
-
-    if clean.as_os_str().is_empty() {
-        return Err(UnsafePathError::Empty);
-    }
-
-    Ok(base.join(clean))
 }
 
 #[cfg(test)]
@@ -307,61 +303,6 @@ mod tests {
 
         // Assert
         assert!(!actual);
-    }
-
-    #[test]
-    fn safe_join_should_return_unsafe_path_error_when_empty_path_given() {
-        // Arrange
-        let base = PathBuf::from("/tmp");
-        let empty = PathBuf::from("");
-
-        // Act
-        let actual = safe_join(&base, &empty);
-
-        // Assert
-        assert!(actual.is_err());
-        assert!(matches!(actual.err().unwrap(), UnsafePathError::Empty))
-    }
-
-    #[test]
-    fn safe_join_should_return_unsafe_path_error_when_absolute_path_given() {
-        // Arrange
-        let base = PathBuf::from("/tmp");
-        let empty = PathBuf::from("/absolute");
-
-        // Act
-        let actual = safe_join(&base, &empty);
-
-        // Assert
-        assert!(actual.is_err());
-        assert!(matches!(actual.err().unwrap(), UnsafePathError::Absolute))
-    }
-
-    #[test]
-    fn safe_join_should_return_unsafe_path_error_when_nested_traversel_path_given() {
-        // Arrange
-        let base = PathBuf::from("/tmp");
-        let empty = PathBuf::from("nested/../../escape");
-
-        // Act
-        let actual = safe_join(&base, &empty);
-
-        // Assert
-        assert!(actual.is_err());
-        assert!(matches!(actual.err().unwrap(), UnsafePathError::Traversal));
-    }
-
-    #[test]
-    fn safe_join_should_join_two_paths() {
-        // Arrange
-        let base = PathBuf::from("/tmp");
-        let empty = PathBuf::from("foo/bar");
-
-        // Act
-        let actual = safe_join(&base, &empty).unwrap();
-
-        // Assert
-        assert_eq!(actual, PathBuf::from("/tmp/foo/bar"))
     }
 
     #[test]
@@ -469,6 +410,65 @@ mod tests {
         assert!(out_dir.join("nested").is_dir());
         assert_eq!(
             fs::read_to_string(out_dir.join("nested/inner.txt")).unwrap(),
+            "world"
+        );
+    }
+
+    #[test]
+    fn extract_archive_should_strip_single_top_level_directory() {
+        // Arrange
+        let dir = TempDir::new().unwrap();
+        let archive_path = dir.path().join("a.tar");
+        let out_dir = dir.path().join("out");
+
+        create_tar(
+            &archive_path,
+            &[
+                ("package/root.txt", "hello"),
+                ("package/nested/inner.txt", "world"),
+            ],
+        );
+
+        // Act
+        extract_archive(&archive_path, &out_dir, true).unwrap();
+
+        // Assert
+        assert_eq!(
+            fs::read_to_string(out_dir.join("root.txt")).unwrap(),
+            "hello"
+        );
+        assert_eq!(
+            fs::read_to_string(out_dir.join("nested/inner.txt")).unwrap(),
+            "world"
+        );
+        assert!(!out_dir.join("package").exists());
+    }
+
+    #[test]
+    fn extract_archive_should_preserve_single_top_level_directory_when_strip_is_false() {
+        // Arrange
+        let dir = TempDir::new().unwrap();
+        let archive_path = dir.path().join("a.tar");
+        let out_dir = dir.path().join("out");
+
+        create_tar(
+            &archive_path,
+            &[
+                ("package/root.txt", "hello"),
+                ("package/nested/inner.txt", "world"),
+            ],
+        );
+
+        // Act
+        extract_archive(&archive_path, &out_dir, false).unwrap();
+
+        // Assert
+        assert_eq!(
+            fs::read_to_string(out_dir.join("package/root.txt")).unwrap(),
+            "hello"
+        );
+        assert_eq!(
+            fs::read_to_string(out_dir.join("package/nested/inner.txt")).unwrap(),
             "world"
         );
     }

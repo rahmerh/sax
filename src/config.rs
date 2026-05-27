@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use anyhow::{Context, Result, anyhow};
 use serde::Deserialize;
 
-const DEFAULT_CONFIG: &str = "extract_prefs:\n  flatten: true\n";
+const DEFAULT_CONFIG: &str = "extract_prefs:\n  strip_top_level_dir: true\n";
 
 #[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
 #[serde(default)]
@@ -17,12 +17,14 @@ pub struct Config {
 #[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
 #[serde(default)]
 pub struct ExtractPrefs {
-    pub flatten: bool,
+    pub strip_top_level_dir: bool,
 }
 
 impl Default for ExtractPrefs {
     fn default() -> Self {
-        Self { flatten: true }
+        Self {
+            strip_top_level_dir: true,
+        }
     }
 }
 
@@ -67,20 +69,19 @@ mod tests {
     use super::*;
 
     #[test]
-    fn config_defaults_flatten_to_true() {
-        assert_eq!(Config::default().extract_prefs.flatten, true);
+    fn config_defaults_strip_top_level_dir_to_true() {
+        assert!(Config::default().extract_prefs.strip_top_level_dir);
     }
 
     #[test]
-    fn config_deserializes_flatten_setting() {
-        assert_eq!(
-            serde_yaml::from_str::<Config>(
-                "extract_prefs:\n  flatten: false # keep wrapper directory\n",
+    fn config_deserializes_strip_top_level_dir_setting() {
+        assert!(
+            !serde_yaml::from_str::<Config>(
+                "extract_prefs:\n  strip_top_level_dir: false # keep wrapper directory\n",
             )
             .unwrap()
             .extract_prefs
-            .flatten,
-            false
+            .strip_top_level_dir
         );
     }
 }

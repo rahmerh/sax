@@ -11,6 +11,7 @@ use crate::extract::{ExtractError, extract_archive, is_archive};
 
 mod config;
 mod extract;
+mod fs_utils;
 
 #[derive(Debug, Parser)]
 #[command(
@@ -24,12 +25,12 @@ struct Cli {
     archive: PathBuf,
     /// Directory to extract into. Created if it does not exist.
     out: PathBuf,
-    /// Flatten a single top-level directory when extracting.
-    #[arg(long, action = clap::ArgAction::SetTrue, conflicts_with = "no_flatten")]
-    flatten: bool,
+    /// Strip a single top-level directory when extracting.
+    #[arg(long = "strip", action = clap::ArgAction::SetTrue, conflicts_with = "no_strip")]
+    strip: bool,
     /// Preserve the archive's top-level directory when extracting.
-    #[arg(long = "no-flatten", action = clap::ArgAction::SetTrue)]
-    no_flatten: bool,
+    #[arg(long = "no-strip", action = clap::ArgAction::SetTrue)]
+    no_strip: bool,
 }
 
 #[derive(Debug, Error)]
@@ -74,15 +75,15 @@ where
 
     match Cli::try_parse_from(std::iter::once("sax".to_string()).chain(args)) {
         Ok(cli) => {
-            let flatten = if cli.flatten {
+            let strip_top_level_dir = if cli.strip {
                 true
-            } else if cli.no_flatten {
+            } else if cli.no_strip {
                 false
             } else {
-                Config::load_or_create()?.extract_prefs.flatten
+                Config::load_or_create()?.extract_prefs.strip_top_level_dir
             };
 
-            extract(&cli.archive, &cli.out, flatten)
+            extract(&cli.archive, &cli.out, strip_top_level_dir)
         }
         Err(err)
             if matches!(
@@ -97,14 +98,14 @@ where
     }
 }
 
-fn extract(archive: &Path, out: &Path, flatten: bool) -> Result<(), AppError> {
+fn extract(archive: &Path, out: &Path, strip_top_level_dir: bool) -> Result<(), AppError> {
     if !is_archive(archive) {
         return Err(AppError::NotArchive {
             path: archive.to_path_buf(),
         });
     }
 
-    extract_archive(archive, out, flatten).map_err(|source| AppError::Extract {
+    extract_archive(archive, out, strip_top_level_dir).map_err(|source| AppError::Extract {
         archive: archive.to_path_buf(),
         out: out.to_path_buf(),
         source,
@@ -136,6 +137,8 @@ mod tests {
             let got = String::from_utf8(stdout).unwrap();
             assert!(got.contains("Usage: sax [OPTIONS] <ARCHIVE> <OUT>"));
             assert!(got.contains("Supported archive formats:"));
+            assert!(got.contains("--strip"));
+            assert!(got.contains("--no-strip"));
         }
     }
 
