@@ -116,6 +116,7 @@ fn extract_archive(path: &Path, out: &Path) -> SaxResult<()> {
         ArchiveType::TarXz => extract_tar(XzDecoder::new(File::open(path)?), out),
         ArchiveType::TarBz2 => extract_tar(BzDecoder::new(File::open(path)?), out),
         ArchiveType::TarZst => extract_tar(ZstdDecoder::new(File::open(path)?)?, out),
+        ArchiveType::SevenZip => extract_7z(path, out),
         other => Err(format!("unsupported archive type: {other:?}").into()),
     }
 }
@@ -181,6 +182,11 @@ where
     }
 
     Ok(())
+}
+
+fn extract_7z(path: &Path, out: &Path) -> SaxResult<()> {
+    sevenz_rust::decompress_file(path, out)
+        .map_err(|err| format!("failed to extract 7z archive: {err}").into())
 }
 
 fn write_file_from_reader(path: &Path, mode: u32, reader: &mut dyn Read) -> SaxResult<()> {
@@ -381,6 +387,26 @@ mod tests {
             &[("root.txt", "hello"), ("nested/inner.txt", "world")],
         );
         create_gzip(&tar_path, &archive_path);
+
+        extract_archive(&archive_path, &out_dir).unwrap();
+
+        assert_file(&out_dir.join("root.txt"), "hello");
+        assert_file(&out_dir.join("nested").join("inner.txt"), "world");
+    }
+
+    #[test]
+    fn extract_archive_extracts_7z_files_into_output_directory() {
+        let dir = TempDir::new().unwrap();
+        let input_dir = dir.path().join("input");
+        let nested_dir = input_dir.join("nested");
+        let archive_path = dir.path().join("a.7z");
+        let out_dir = dir.path().join("out");
+
+        fs::create_dir_all(&nested_dir).unwrap();
+        fs::write(input_dir.join("root.txt"), "hello").unwrap();
+        fs::write(nested_dir.join("inner.txt"), "world").unwrap();
+
+        sevenz_rust::compress_to_path(&input_dir, &archive_path).unwrap();
 
         extract_archive(&archive_path, &out_dir).unwrap();
 

@@ -6,6 +6,7 @@ edition = "2024"
 [dependencies]
 bzip2 = "0.6.1"
 flate2 = "1.1.9"
+sevenz-rust = "0.6.1"
 tar = "0.4.44"
 xz2 = "0.1.7"
 zip = "7.0.0"
