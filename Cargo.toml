@@ -8,11 +8,15 @@ repository = "https://github.com/rahmerh/sax"
 readme = "README.md"
 
 [dependencies]
+anyhow = "1"
 bzip2 = "0.6.1"
 clap = { version = "4", features = ["derive"] }
 flate2 = "1.1.9"
+serde = { version = "1", features = ["derive"] }
+serde_yaml = "0.9"
 sevenz-rust = "0.6.1"
 tar = "0.4.44"
+thiserror = "2"
 unrar-ng = "0.7"
 xz2 = "0.1.7"
 zip = "7.0.0"

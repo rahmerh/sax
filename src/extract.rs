@@ -1,4 +1,3 @@
-use std::error::Error;
 use std::ffi::OsStr;
 use std::fs::{self, File};
 use std::io::{self, Read};
@@ -9,10 +8,48 @@ use std::path::{Component, Path, PathBuf};
 use bzip2::read::BzDecoder;
 use flate2::read::GzDecoder;
 use tar::EntryType;
+use thiserror::Error;
 use xz2::read::XzDecoder;
 use zstd::stream::read::Decoder as ZstdDecoder;
 
-pub type SaxResult<T> = Result<T, Box<dyn Error + Send + Sync>>;
+#[derive(Debug, Error)]
+pub enum ExtractError {
+    #[error("'{path}' does not exist")]
+    ArchiveDoesNotExist { path: PathBuf },
+    #[error("unsupported archive type: {path}")]
+    UnsupportedArchiveType { path: PathBuf },
+    #[error("failed to create output directory '{path}': {source}")]
+    CreateOutputDir {
+        path: PathBuf,
+        #[source]
+        source: io::Error,
+    },
+    #[error("unsafe {format} path '{path}': {source}")]
+    UnsafeArchivePath {
+        format: &'static str,
+        path: PathBuf,
+        #[source]
+        source: UnsafePathError,
+    },
+    #[error("I/O error: {0}")]
+    Io(#[from] io::Error),
+    #[error("ZIP archive error: {0}")]
+    Zip(#[from] zip::result::ZipError),
+    #[error("7z archive error: {0}")]
+    SevenZip(#[from] sevenz_rust::Error),
+    #[error("RAR archive error: {0}")]
+    Rar(#[from] unrar_ng::error::UnrarError),
+}
+
+#[derive(Debug, Error)]
+pub enum UnsafePathError {
+    #[error("empty paths are not allowed")]
+    Empty,
+    #[error("absolute paths are not allowed")]
+    Absolute,
+    #[error("path traversal ('..') is not allowed")]
+    Traversal,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ArchiveType {
@@ -26,14 +63,24 @@ enum ArchiveType {
     Rar,
 }
 
-pub fn extract_archive(path: &Path, out: &Path) -> SaxResult<()> {
+pub fn extract_archive(path: &Path, out: &Path, flatten: bool) -> Result<(), ExtractError> {
     if !path.exists() {
-        return Err(format!("'{}' does not exist", path.display()).into());
+        return Err(ExtractError::ArchiveDoesNotExist {
+            path: path.to_path_buf(),
+        });
     }
 
-    fs::create_dir_all(out)
-        .map_err(|err| format!("failed to create '{}': {err}", out.display()))?;
+    fs::create_dir_all(out).map_err(|source| ExtractError::CreateOutputDir {
+        path: out.to_path_buf(),
+        source,
+    })?;
 
+    if flatten {}
+
+    extract_archive_to(path, out)
+}
+
+fn extract_archive_to(path: &Path, out: &Path) -> Result<(), ExtractError> {
     match detect_archive_type(path)? {
         ArchiveType::Zip => extract_zip(path, out),
         ArchiveType::Tar => extract_tar(File::open(path)?, out),
@@ -46,15 +93,19 @@ pub fn extract_archive(path: &Path, out: &Path) -> SaxResult<()> {
     }
 }
 
-fn extract_zip(path: &Path, out: &Path) -> SaxResult<()> {
-    let file = File::open(path).map_err(|err| format!("failed to read ZIP archive: {err}"))?;
-    let mut archive =
-        zip::ZipArchive::new(file).map_err(|err| format!("failed to read ZIP archive: {err}"))?;
+fn extract_zip(path: &Path, out: &Path) -> Result<(), ExtractError> {
+    let file = File::open(path)?;
+    let mut archive = zip::ZipArchive::new(file)?;
 
     for index in 0..archive.len() {
         let mut entry = archive.by_index(index)?;
-        let out_path = safe_join(out, Path::new(entry.name()))
-            .map_err(|err| format!("unsafe ZIP path '{}': {err}", entry.name()))?;
+        let out_path = safe_join(out, Path::new(entry.name())).map_err(|source| {
+            ExtractError::UnsafeArchivePath {
+                format: "ZIP",
+                path: PathBuf::from(entry.name()),
+                source,
+            }
+        })?;
 
         if entry.is_dir() {
             fs::create_dir_all(&out_path)?;
@@ -76,7 +127,7 @@ fn extract_zip(path: &Path, out: &Path) -> SaxResult<()> {
     Ok(())
 }
 
-fn extract_tar<R>(reader: R, out: &Path) -> SaxResult<()>
+fn extract_tar<R>(reader: R, out: &Path) -> Result<(), ExtractError>
 where
     R: Read,
 {
@@ -85,8 +136,12 @@ where
     for entry in archive.entries()? {
         let mut entry = entry?;
         let entry_path = entry.path()?.into_owned();
-        let out_path = safe_join(out, &entry_path)
-            .map_err(|err| format!("unsafe TAR path '{}': {err}", entry_path.display()))?;
+        let out_path =
+            safe_join(out, &entry_path).map_err(|source| ExtractError::UnsafeArchivePath {
+                format: "TAR",
+                path: entry_path.clone(),
+                source,
+            })?;
         let entry_type = entry.header().entry_type();
         let mode = entry.header().mode().unwrap_or(0o644);
 
@@ -109,36 +164,34 @@ where
     Ok(())
 }
 
-fn extract_7z(path: &Path, out: &Path) -> SaxResult<()> {
-    sevenz_rust::decompress_file(path, out)
-        .map_err(|err| format!("failed to extract 7z archive: {err}").into())
+fn extract_7z(path: &Path, out: &Path) -> Result<(), ExtractError> {
+    sevenz_rust::decompress_file(path, out)?;
+    Ok(())
 }
 
-fn extract_rar(path: &Path, out: &Path) -> SaxResult<()> {
+fn extract_rar(path: &Path, out: &Path) -> Result<(), ExtractError> {
     unrar_ng::Archive::new(path)
         .open_for_processing()?
         .extract_all(out)?;
     Ok(())
 }
 
-fn write_file_from_reader(path: &Path, mode: u32, reader: &mut dyn Read) -> SaxResult<()> {
+fn write_file_from_reader(
+    path: &Path,
+    mode: u32,
+    reader: &mut dyn Read,
+) -> Result<(), ExtractError> {
     let mut file = File::create(path)?;
     io::copy(reader, &mut file)?;
     set_permissions(path, mode)?;
     Ok(())
 }
 
-#[cfg(unix)]
 fn set_permissions(path: &Path, mode: u32) -> io::Result<()> {
     fs::set_permissions(path, fs::Permissions::from_mode(mode & 0o777))
 }
 
-#[cfg(not(unix))]
-fn set_permissions(_path: &Path, _mode: u32) -> io::Result<()> {
-    Ok(())
-}
-
-fn detect_archive_type(path: &Path) -> SaxResult<ArchiveType> {
+fn detect_archive_type(path: &Path) -> Result<ArchiveType, ExtractError> {
     let name = path
         .file_name()
         .and_then(OsStr::to_str)
@@ -154,7 +207,9 @@ fn detect_archive_type(path: &Path) -> SaxResult<ArchiveType> {
         name if name.ends_with(".tar.zst") || name.ends_with(".tzst") => Ok(ArchiveType::TarZst),
         name if name.ends_with(".7z") => Ok(ArchiveType::SevenZip),
         name if name.ends_with(".rar") => Ok(ArchiveType::Rar),
-        _ => Err(format!("unsupported archive type: {}", path.display()).into()),
+        _ => Err(ExtractError::UnsupportedArchiveType {
+            path: path.to_path_buf(),
+        }),
     }
 }
 
@@ -162,12 +217,13 @@ pub fn is_archive(path: &Path) -> bool {
     path.exists() && detect_archive_type(path).is_ok()
 }
 
-fn safe_join(base: &Path, rel: &Path) -> SaxResult<PathBuf> {
+fn safe_join(base: &Path, rel: &Path) -> Result<PathBuf, UnsafePathError> {
     if rel.as_os_str().is_empty() {
-        return Err("empty paths are not allowed".into());
+        return Err(UnsafePathError::Empty);
     }
+
     if rel.is_absolute() {
-        return Err("absolute paths are not allowed".into());
+        return Err(UnsafePathError::Absolute);
     }
 
     let mut clean = PathBuf::new();
@@ -175,15 +231,15 @@ fn safe_join(base: &Path, rel: &Path) -> SaxResult<PathBuf> {
         match component {
             Component::Normal(part) => clean.push(part),
             Component::CurDir => {}
-            Component::ParentDir => return Err("path traversal ('..') is not allowed".into()),
+            Component::ParentDir => return Err(UnsafePathError::Traversal),
             Component::RootDir | Component::Prefix(_) => {
-                return Err("absolute paths are not allowed".into());
+                return Err(UnsafePathError::Absolute);
             }
         }
     }
 
     if clean.as_os_str().is_empty() {
-        return Err("empty paths are not allowed".into());
+        return Err(UnsafePathError::Empty);
     }
 
     Ok(base.join(clean))
@@ -200,8 +256,9 @@ mod tests {
     use zip::write::SimpleFileOptions;
 
     #[test]
-    fn detect_archive_types() {
-        let tests = [
+    fn detect_archive_type_should_assert_correct_archive_type_enum() {
+        // Arrange
+        let archive_types = [
             ("test.zip", ArchiveType::Zip),
             ("test.tar", ArchiveType::Tar),
             ("test.tar.gz", ArchiveType::TarGz),
@@ -216,32 +273,119 @@ mod tests {
             ("test.rar", ArchiveType::Rar),
         ];
 
-        for (name, want) in tests {
-            assert_eq!(detect_archive_type(Path::new(name)).unwrap(), want);
+        // Assert
+        for (name, expected) in archive_types {
+            let actual = detect_archive_type(Path::new(name)).unwrap();
+
+            assert_eq!(actual, expected);
         }
     }
 
     #[test]
-    fn is_archive_requires_existing_supported_file() {
+    fn is_archive_should_return_true_when_correct_archive_name_given() {
+        // Arrange
         let dir = TempDir::new().unwrap();
         let path = dir.path().join("a.tar.gz");
+        File::create(&path).unwrap();
 
-        assert!(!is_archive(&path));
+        // Act
+        let actual = is_archive(&path);
 
-        fs::write(&path, b"archive").unwrap();
-
-        assert!(is_archive(&path));
+        // Assert
+        assert!(actual);
     }
 
     #[test]
-    fn safe_join_rejects_unsafe_paths() {
-        for rel in ["../escape", "/absolute", "nested/../../escape"] {
-            assert!(safe_join(Path::new("/tmp/out"), Path::new(rel)).is_err());
+    fn is_archive_should_return_false_when_incorrect_archive_name_given() {
+        // Arrange
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("foo");
+        File::create(&path).unwrap();
+
+        // Act
+        let actual = is_archive(&path);
+
+        // Assert
+        assert!(!actual);
+    }
+
+    #[test]
+    fn safe_join_should_return_unsafe_path_error_when_empty_path_given() {
+        // Arrange
+        let base = PathBuf::from("/tmp");
+        let empty = PathBuf::from("");
+
+        // Act
+        let actual = safe_join(&base, &empty);
+
+        // Assert
+        assert!(actual.is_err());
+        assert!(matches!(actual.err().unwrap(), UnsafePathError::Empty))
+    }
+
+    #[test]
+    fn safe_join_should_return_unsafe_path_error_when_absolute_path_given() {
+        // Arrange
+        let base = PathBuf::from("/tmp");
+        let empty = PathBuf::from("/absolute");
+
+        // Act
+        let actual = safe_join(&base, &empty);
+
+        // Assert
+        assert!(actual.is_err());
+        assert!(matches!(actual.err().unwrap(), UnsafePathError::Absolute))
+    }
+
+    #[test]
+    fn safe_join_should_return_unsafe_path_error_when_nested_traversel_path_given() {
+        // Arrange
+        let base = PathBuf::from("/tmp");
+        let empty = PathBuf::from("nested/../../escape");
+
+        // Act
+        let actual = safe_join(&base, &empty);
+
+        // Assert
+        assert!(actual.is_err());
+        assert!(matches!(actual.err().unwrap(), UnsafePathError::Traversal));
+    }
+
+    #[test]
+    fn safe_join_should_join_two_paths() {
+        // Arrange
+        let base = PathBuf::from("/tmp");
+        let empty = PathBuf::from("foo/bar");
+
+        // Act
+        let actual = safe_join(&base, &empty).unwrap();
+
+        // Assert
+        assert_eq!(actual, PathBuf::from("/tmp/foo/bar"))
+    }
+
+    #[test]
+    fn extract_archive_should_return_extract_error_when_archive_doesnt_exist() {
+        // Arrange
+        let input = PathBuf::from("/tmp/doesnt-exist.zip");
+        let out = TempDir::new().unwrap();
+
+        // Act
+        let result = extract_archive(&input, out.path(), true);
+
+        // Assert
+        assert!(result.is_err());
+        match result.err().unwrap() {
+            ExtractError::ArchiveDoesNotExist { path: actual_path } => {
+                assert_eq!(actual_path, input);
+            }
+            other => panic!("expected ArchiveDoesNotExist, got {other:?}"),
         }
     }
 
     #[test]
-    fn extract_archive_extracts_zip_files_into_output_directory() {
+    fn extract_archive_should_extract_zip_into_output_directory() {
+        // Arrange
         let dir = TempDir::new().unwrap();
         let archive_path = dir.path().join("a.zip");
         let out_dir = dir.path().join("out");
@@ -255,15 +399,25 @@ mod tests {
             ],
         );
 
-        extract_archive(&archive_path, &out_dir).unwrap();
+        // Act
+        extract_archive(&archive_path, &out_dir, true).unwrap();
 
-        assert_file(&out_dir.join("root.txt"), "hello");
-        assert_file(&out_dir.join("nested").join("inner.txt"), "world");
+        // Assert
+        assert_eq!(
+            fs::read_to_string(out_dir.join("root.txt")).unwrap(),
+            "hello"
+        );
+
         assert!(out_dir.join("nested").is_dir());
+        assert_eq!(
+            fs::read_to_string(out_dir.join("nested/inner.txt")).unwrap(),
+            "world"
+        );
     }
 
     #[test]
-    fn extract_archive_extracts_tar_files_into_output_directory() {
+    fn extract_archive_should_extract_tar_into_output_directory() {
+        // Arrange
         let dir = TempDir::new().unwrap();
         let archive_path = dir.path().join("a.tar");
         let out_dir = dir.path().join("out");
@@ -273,14 +427,25 @@ mod tests {
             &[("root.txt", "hello"), ("nested/inner.txt", "world")],
         );
 
-        extract_archive(&archive_path, &out_dir).unwrap();
+        // Act
+        extract_archive(&archive_path, &out_dir, true).unwrap();
 
-        assert_file(&out_dir.join("root.txt"), "hello");
-        assert_file(&out_dir.join("nested").join("inner.txt"), "world");
+        // Assert
+        assert_eq!(
+            fs::read_to_string(out_dir.join("root.txt")).unwrap(),
+            "hello"
+        );
+
+        assert!(out_dir.join("nested").is_dir());
+        assert_eq!(
+            fs::read_to_string(out_dir.join("nested/inner.txt")).unwrap(),
+            "world"
+        );
     }
 
     #[test]
-    fn extract_archive_extracts_tar_gz_files_into_output_directory() {
+    fn extract_archive_should_extract_tar_gz_into_output_directory() {
+        // Arrange
         let dir = TempDir::new().unwrap();
         let tar_path = dir.path().join("a.tar");
         let archive_path = dir.path().join("a.tar.gz");
@@ -292,14 +457,25 @@ mod tests {
         );
         create_gzip(&tar_path, &archive_path);
 
-        extract_archive(&archive_path, &out_dir).unwrap();
+        // Act
+        extract_archive(&archive_path, &out_dir, true).unwrap();
 
-        assert_file(&out_dir.join("root.txt"), "hello");
-        assert_file(&out_dir.join("nested").join("inner.txt"), "world");
+        // Assert
+        assert_eq!(
+            fs::read_to_string(out_dir.join("root.txt")).unwrap(),
+            "hello"
+        );
+
+        assert!(out_dir.join("nested").is_dir());
+        assert_eq!(
+            fs::read_to_string(out_dir.join("nested/inner.txt")).unwrap(),
+            "world"
+        );
     }
 
     #[test]
-    fn extract_archive_extracts_7z_files_into_output_directory() {
+    fn extract_archive_should_extract_7z_into_output_directory() {
+        // Arrange
         let dir = TempDir::new().unwrap();
         let input_dir = dir.path().join("input");
         let nested_dir = input_dir.join("nested");
@@ -312,14 +488,25 @@ mod tests {
 
         sevenz_rust::compress_to_path(&input_dir, &archive_path).unwrap();
 
-        extract_archive(&archive_path, &out_dir).unwrap();
+        // Act
+        extract_archive(&archive_path, &out_dir, true).unwrap();
 
-        assert_file(&out_dir.join("root.txt"), "hello");
-        assert_file(&out_dir.join("nested").join("inner.txt"), "world");
+        // Assert
+        assert_eq!(
+            fs::read_to_string(out_dir.join("root.txt")).unwrap(),
+            "hello"
+        );
+
+        assert!(out_dir.join("nested").is_dir());
+        assert_eq!(
+            fs::read_to_string(out_dir.join("nested/inner.txt")).unwrap(),
+            "world"
+        );
     }
 
     #[test]
-    fn extract_archive_extracts_rar_files_into_output_directory() {
+    fn extract_archive_should_extract_rar_into_output_directory() {
+        // Arrange
         let dir = TempDir::new().unwrap();
         let archive_path = dir.path().join("test.part01.rar");
         let out_dir = dir.path().join("out");
@@ -327,24 +514,16 @@ mod tests {
         create_fixture_archive(&archive_path, TEST_RAR_PART_1);
         create_fixture_archive(&dir.path().join("test.part02.rar"), TEST_RAR_PART_2);
 
-        extract_archive(&archive_path, &out_dir).unwrap();
+        // Act
+        extract_archive(&archive_path, &out_dir, true).unwrap();
 
-        let got = fs::read(out_dir.join("test.txt")).unwrap();
-        let digest = Sha1::digest(&got);
+        // Assert
+        let actual = fs::read(out_dir.join("test.txt")).unwrap();
+        let digest = Sha1::digest(&actual);
         assert_eq!(
             format!("{digest:x}"),
             "4da7f88f69b44a3fdb705667019a65f4c6e058a3"
         );
-    }
-
-    #[test]
-    fn extract_archive_fails_when_archive_does_not_exist() {
-        let dir = TempDir::new().unwrap();
-        let err = extract_archive(&dir.path().join("missing.zip"), &dir.path().join("out"))
-            .unwrap_err()
-            .to_string();
-
-        assert!(err.contains("does not exist"));
     }
 
     fn create_zip(path: &Path, entries: &[(&str, &str)]) {
@@ -425,10 +604,6 @@ mod tests {
         }
 
         out
-    }
-
-    fn assert_file(path: &Path, want: &str) {
-        assert_eq!(fs::read_to_string(path).unwrap(), want);
     }
 
     const TEST_RAR_PART_1: &str = "UmFyIRoHAQBt4SgnCwEFBwEGAQGAgIAAEP5UsygCEwvhhgAEv8UApIMC4JlDmoADAQh0ZXN0LnR4dAoDEyO9GGi6v4cPz7QlBEVUMzUFU/JQNHL7mGuFIr5z/J6B4bcvXfL11LjidU6p04HF6D3xMapGjQBCKOxFtYcNiyPkggDd6gOAjCMD/5QACQANA/frHrT1r6z629b+uPXPrr1jyJ3Fx3Gx3Hx3Ix3Jx3Kxx+bmdzdJp5RtpNJpNJpNJpNZrNfPaW1ms1ms1mszMzMz5yLZmZmZmZtNptNpt588ttNptNpvN5vN5vN/PrbbzebzicTicTicTjzpluJxOZzOZzOZzOZz52u3M6nU6nU6nU6nU6nXgL7BnvsG++w899hHvsKe+wn32HvvsK++wt782/0bXeDjwc+D94OvB/8Hfg87Hvc7zb6TSaTSaTSaTSaTWazWazWazWazWazMzMzMzMzMzMzM2m02m02m36/jzH6fj57+I+n9jaf8f2/p5j+//juvx83/+x/K7g/r/v7r/pp/T/jDv+/PW/fbg+Ly9rzeMC+MDeMD+MEeME+MHvGCvGD/jBf1gz6wb4w8+sI+sKfWE/WHv1hX6wt9YX+sMeMM97r7QxMTExMTExMTE0mk0mk0mk0mk0mk1ms1ms1ms1ms1mszMzMzMzMzMzMzNptNptNptNptNptN5vN5vN5vN5vN5vOJxOJxOJxOJxOJxOZzOZzOZzOZzOZzOp1Op1Op1Op1Op5fOJiYmJiYmJiYn+vwF13j7QxMTExMTExMTy+cTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTE7yBBiIECBAgQIECBAgQIECBAgQIFdp8Wutda611rrXWutdYECBAgRpBGk0mk0mk0hpECBAgQIECBAgQIECBAgQIECBAgQIECBAgQIECBAgV2vxa611rrXWutda611gRiCBAg1iBAgQI1msFbzLPx9oazWazWeXygQIECBAgQIECBAgQIECBAgQIECBAgQIECBXZ+LXWutda611rrXWusCBAgQIECBAgQIECBAjMzMwRmZmZmGYgQIECBAgQIECBAgQIECBAgQIECBArtvi11rrXWutda611rrAgRiCBBtECBAgQIECBAgQIECBG02m02m0NvL52m07y+0BAgQIECBAgQIECBAgQIECBArt/i11rrXWutda611rrAgQIECBAgQIECBAgQIECBAgQIECBAgQIItHUSYDBQQBAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==";

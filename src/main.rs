@@ -2,10 +2,14 @@ use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::process;
 
+use anyhow::Context;
 use clap::{CommandFactory, Parser, error::ErrorKind};
+use thiserror::Error;
 
-use crate::extract::{SaxResult, extract_archive, is_archive};
+use crate::config::Config;
+use crate::extract::{ExtractError, extract_archive, is_archive};
 
+mod config;
 mod extract;
 
 #[derive(Debug, Parser)]
@@ -20,16 +24,38 @@ struct Cli {
     archive: PathBuf,
     /// Directory to extract into. Created if it does not exist.
     out: PathBuf,
+    /// Flatten a single top-level directory when extracting.
+    #[arg(long, action = clap::ArgAction::SetTrue, conflicts_with = "no_flatten")]
+    flatten: bool,
+    /// Preserve the archive's top-level directory when extracting.
+    #[arg(long = "no-flatten", action = clap::ArgAction::SetTrue)]
+    no_flatten: bool,
+}
+
+#[derive(Debug, Error)]
+enum AppError {
+    #[error("{path} is not an archive")]
+    NotArchive { path: PathBuf },
+    #[error("could not extract archive {archive} to {out}: {source}")]
+    Extract {
+        archive: PathBuf,
+        out: PathBuf,
+        #[source]
+        source: ExtractError,
+    },
+    #[error(transparent)]
+    Other(#[from] anyhow::Error),
 }
 
 fn main() {
     if let Err(err) = run(std::env::args().skip(1), &mut io::stdout()) {
         eprintln!("Something went wrong: {err}");
+
         process::exit(1);
     }
 }
 
-fn run<I, S>(args: I, stdout: &mut dyn Write) -> SaxResult<()>
+fn run<I, S>(args: I, stdout: &mut dyn Write) -> Result<(), AppError>
 where
     I: IntoIterator<Item = S>,
     S: Into<String>,
@@ -38,39 +64,50 @@ where
 
     if args.is_empty() {
         let mut help = Vec::new();
-        Cli::command().write_long_help(&mut help)?;
-        stdout.write_all(&help)?;
-        writeln!(stdout)?;
+        Cli::command()
+            .write_long_help(&mut help)
+            .context("failed to render help")?;
+        stdout.write_all(&help).context("failed to write help")?;
+        writeln!(stdout).context("failed to write help")?;
         return Ok(());
     }
 
     match Cli::try_parse_from(std::iter::once("sax".to_string()).chain(args)) {
-        Ok(cli) => extract(&cli.archive, &cli.out),
+        Ok(cli) => {
+            let flatten = if cli.flatten {
+                true
+            } else if cli.no_flatten {
+                false
+            } else {
+                Config::load_or_create()?.extract_prefs.flatten
+            };
+
+            extract(&cli.archive, &cli.out, flatten)
+        }
         Err(err)
             if matches!(
                 err.kind(),
                 ErrorKind::DisplayHelp | ErrorKind::DisplayVersion
             ) =>
         {
-            write!(stdout, "{err}")?;
+            write!(stdout, "{err}").context("failed to write CLI output")?;
             Ok(())
         }
-        Err(err) => Err(err.into()),
+        Err(err) => Err(anyhow::Error::from(err).into()),
     }
 }
 
-fn extract(archive: &Path, out: &Path) -> SaxResult<()> {
+fn extract(archive: &Path, out: &Path, flatten: bool) -> Result<(), AppError> {
     if !is_archive(archive) {
-        return Err(format!("{} is not an archive", archive.display()).into());
+        return Err(AppError::NotArchive {
+            path: archive.to_path_buf(),
+        });
     }
 
-    extract_archive(archive, out).map_err(|err| {
-        format!(
-            "could not extract archive {} to {}: {err}",
-            archive.display(),
-            out.display()
-        )
-        .into()
+    extract_archive(archive, out, flatten).map_err(|source| AppError::Extract {
+        archive: archive.to_path_buf(),
+        out: out.to_path_buf(),
+        source,
     })
 }
 
@@ -85,7 +122,7 @@ mod tests {
         run(Vec::<String>::new(), &mut stdout).unwrap();
 
         let got = String::from_utf8(stdout).unwrap();
-        assert!(got.contains("Usage: sax <ARCHIVE> <OUT>"));
+        assert!(got.contains("Usage: sax [OPTIONS] <ARCHIVE> <OUT>"));
         assert!(got.contains("Supported archive formats:"));
     }
 
@@ -97,7 +134,7 @@ mod tests {
             run([flag], &mut stdout).unwrap();
 
             let got = String::from_utf8(stdout).unwrap();
-            assert!(got.contains("Usage: sax <ARCHIVE> <OUT>"));
+            assert!(got.contains("Usage: sax [OPTIONS] <ARCHIVE> <OUT>"));
             assert!(got.contains("Supported archive formats:"));
         }
     }

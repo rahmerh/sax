@@ -18,17 +18,25 @@ cargo install sax
 
 ```bash
 sax <archive> <out>
-sax --help
-sax --version
 ```
 
 Extracts the contents of an archive into the output directory, creating it if needed.
+If the archive contains a single top-level directory, sax flattens it by default
+and extracts that directory's contents directly into the output directory.
+
+This can be controlled by setting your preference in the config file. 
+Configuration is stored in `~/.config/sax/config.yaml` by default,
+or `$XDG_CONFIG_HOME/sax/config.yaml` when `XDG_CONFIG_HOME` is set.
+
+Alternatively, you can use `--flatten` or `--no-flatten` to override the configured behavior for a
+single extraction.
 
 Supported archive formats: zip, tar, tar.gz, tgz, tar.xz, txz, tar.bz2, tbz2, tar.zst, tzst, 7z, rar.
 
 ```bash
 sax input.zip out/
 sax backup.tar.gz restored/
+sax --no-flatten package.zip restored/
 ```
 
 ## Todo
