@@ -11,7 +11,7 @@ use thiserror::Error;
 use xz2::read::XzDecoder;
 use zstd::stream::read::Decoder as ZstdDecoder;
 
-use crate::fs_utils::{
+use crate::util::fs::{
     UnsafePathError, move_dir_contents, safe_join, set_permissions, single_child_dir_or_self,
     write_file_from_reader,
 };

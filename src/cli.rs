@@ -7,6 +7,7 @@ use thiserror::Error;
 
 use crate::config::Config;
 use crate::extract::{ExtractError, extract_archive, is_archive};
+use crate::util::prompt::{Prompt, Prompter};
 
 #[derive(Debug, Parser)]
 #[command(
@@ -74,7 +75,8 @@ impl Cli {
             return Ok(());
         }
 
-        let action = parse_action(self.paths.clone())?;
+        let prompt = Prompter;
+        let action = parse_action(self.paths.clone(), &prompt)?;
 
         let strip_top_level_dir = if self.strip {
             true
@@ -109,16 +111,15 @@ impl Cli {
     }
 }
 
-fn parse_action(paths: Vec<PathBuf>) -> Result<Action, AppError> {
+fn parse_action(paths: Vec<PathBuf>, prompt: &dyn Prompt) -> Result<Action, AppError> {
     let Some(first) = paths.first() else {
         return Err(AppError::InvalidArgs(
-            "expected an archive and output folder, or inputs followed by an archive name"
-                .to_string(),
+            "Could not parse arguments".to_string(),
         ));
     };
 
     if is_archive(first) && first.exists() {
-        return parse_extract_action(paths);
+        return parse_extract_action(paths, prompt);
     }
 
     if first.exists() {
@@ -130,15 +131,21 @@ fn parse_action(paths: Vec<PathBuf>) -> Result<Action, AppError> {
     ))
 }
 
-fn parse_extract_action(paths: Vec<PathBuf>) -> Result<Action, AppError> {
-    if paths.len() != 2 {
-        return Err(AppError::InvalidArgs(
-            "extracting expects exactly one archive and one output folder".to_string(),
-        ));
+fn parse_extract_action(paths: Vec<PathBuf>, prompt: &dyn Prompt) -> Result<Action, AppError> {
+    if paths.len() > 2 {
+        let first = paths.first().unwrap();
+        return Err(AppError::InvalidArgs(format!(
+            "Could not extract {}, too many arguments.",
+            first.display()
+        )));
     }
 
     let archive = paths[0].clone();
-    let out = paths[1].clone();
+    let out = if paths.len() == 1 {
+        prompt.path("Where do you want to extract to?")
+    } else {
+        paths[1].clone()
+    };
 
     if out.exists() && !out.is_dir() {
         return Err(AppError::NotFolder { path: out });
@@ -188,30 +195,49 @@ mod tests {
     use std::fs::File;
     use tempfile::TempDir;
 
+    struct TestPrompt {
+        out: PathBuf,
+    }
+
+    impl Prompt for TestPrompt {
+        fn path(&self, _message: &str) -> PathBuf {
+            self.out.clone()
+        }
+    }
+
+    fn test_prompt() -> TestPrompt {
+        TestPrompt {
+            out: PathBuf::from("prompted-out"),
+        }
+    }
+
     #[test]
     fn parse_action_should_return_err_when_no_paths_given() {
         // Arrange
         let input = vec![];
+        let prompt = test_prompt();
 
         // Act
-        let actual = parse_action(input);
+        let actual = parse_action(input, &prompt);
 
         // Assert
         assert!(matches!(actual.unwrap_err(), AppError::InvalidArgs(_)));
     }
 
     #[test]
-    fn parse_action_should_return_error_when_single_archive_given() {
+    fn parse_action_should_prompt_for_output_when_single_archive_given() {
         // Arrange
         let dir = TempDir::new().unwrap();
         let archive = dir.path().join("input.zip");
+        let out = dir.path().join("out");
+        let prompt = TestPrompt { out: out.clone() };
         File::create(&archive).unwrap();
 
         // Act
-        let actual = parse_action(vec![archive]);
+        let actual = parse_action(vec![archive.clone()], &prompt);
 
         // Assert
-        assert!(matches!(actual.unwrap_err(), AppError::InvalidArgs(_)));
+        assert_eq!(actual.unwrap(), Action::Extract { archive, out });
     }
 
     #[test]
@@ -219,14 +245,14 @@ mod tests {
         // Arrange
         let dir = TempDir::new().unwrap();
         let archive = dir.path().join("input.zip");
+        let prompt = test_prompt();
         File::create(&archive).unwrap();
 
         // Act
-        let actual = parse_action(vec![
-            archive,
-            dir.path().join("out"),
-            dir.path().join("extra"),
-        ]);
+        let actual = parse_action(
+            vec![archive, dir.path().join("out"), dir.path().join("extra")],
+            &prompt,
+        );
 
         // Assert
         assert!(matches!(actual.unwrap_err(), AppError::InvalidArgs(_)));
@@ -238,11 +264,12 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let archive = dir.path().join("input.zip");
         let input = dir.path().join("file.txt");
+        let prompt = test_prompt();
         File::create(&archive).unwrap();
         File::create(&input).unwrap();
 
         // Act
-        let actual = parse_action(vec![archive, input]);
+        let actual = parse_action(vec![archive, input], &prompt);
 
         // Assert
         assert!(matches!(
@@ -257,10 +284,11 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let archive = dir.path().join("input.zip");
         let out = dir.path().join("out");
+        let prompt = test_prompt();
         File::create(&archive).unwrap();
 
         // Act
-        let actual = parse_action(vec![archive.clone(), out.clone()]);
+        let actual = parse_action(vec![archive.clone(), out.clone()], &prompt);
 
         // Assert
         assert_eq!(actual.unwrap(), Action::Extract { archive, out });
@@ -271,10 +299,11 @@ mod tests {
         // Arrange
         let dir = TempDir::new().unwrap();
         let input = dir.path().join("input.txt");
+        let prompt = test_prompt();
         File::create(&input).unwrap();
 
         // Act
-        let actual = parse_action(vec![input]);
+        let actual = parse_action(vec![input], &prompt);
 
         // Assert
         assert!(matches!(actual.unwrap_err(), AppError::InvalidArgs(_)));
@@ -287,11 +316,12 @@ mod tests {
         let input = dir.path().join("input.txt");
         let second_input = dir.path().join("input2.txt");
         let out = dir.path().join("out.zip");
+        let prompt = test_prompt();
 
         File::create(&input).unwrap();
 
         // Act
-        let actual = parse_action(vec![input, second_input, out]);
+        let actual = parse_action(vec![input, second_input, out], &prompt);
 
         // Assert
         assert!(matches!(
@@ -306,12 +336,13 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let input = dir.path().join("input.txt");
         let out = dir.path().join("out.zip");
+        let prompt = test_prompt();
 
         File::create(&input).unwrap();
         File::create(&out).unwrap();
 
         // Act
-        let actual = parse_action(vec![input, out]);
+        let actual = parse_action(vec![input, out], &prompt);
 
         // Assert
         assert!(matches!(
@@ -326,11 +357,12 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let input = dir.path().join("input.txt");
         let out = dir.path().join("out.foo");
+        let prompt = test_prompt();
 
         File::create(&input).unwrap();
 
         // Act
-        let actual = parse_action(vec![input, out]);
+        let actual = parse_action(vec![input, out], &prompt);
 
         // Assert
         assert!(matches!(
@@ -346,12 +378,16 @@ mod tests {
         let input = dir.path().join("file.txt");
         let second_input = dir.path().join("file2.txt");
         let out = dir.path().join("input.zip");
+        let prompt = test_prompt();
 
         File::create(&input).unwrap();
         File::create(&second_input).unwrap();
 
         // Act
-        let actual = parse_action(vec![input.clone(), second_input.clone(), out.clone()]);
+        let actual = parse_action(
+            vec![input.clone(), second_input.clone(), out.clone()],
+            &prompt,
+        );
 
         // Assert
         assert_eq!(
