@@ -18,8 +18,6 @@ use crate::fs_utils::{
 
 #[derive(Debug, Error)]
 pub enum ExtractError {
-    #[error("'{path}' does not exist")]
-    ArchiveDoesNotExist { path: PathBuf },
     #[error("unsupported archive type: {path}")]
     UnsupportedArchiveType { path: PathBuf },
     #[error("failed to create output directory '{path}': {source}")]
@@ -74,12 +72,6 @@ pub fn extract_archive(
     out: &Path,
     strip_top_level_dir: bool,
 ) -> Result<(), ExtractError> {
-    if !path.exists() {
-        return Err(ExtractError::ArchiveDoesNotExist {
-            path: path.to_path_buf(),
-        });
-    }
-
     fs::create_dir_all(out).map_err(|source| ExtractError::CreateOutputDir {
         path: out.to_path_buf(),
         source,
@@ -303,25 +295,6 @@ mod tests {
 
         // Assert
         assert!(!actual);
-    }
-
-    #[test]
-    fn extract_archive_should_return_extract_error_when_archive_doesnt_exist() {
-        // Arrange
-        let input = PathBuf::from("/tmp/doesnt-exist.zip");
-        let out = TempDir::new().unwrap();
-
-        // Act
-        let result = extract_archive(&input, out.path(), true);
-
-        // Assert
-        assert!(result.is_err());
-        match result.err().unwrap() {
-            ExtractError::ArchiveDoesNotExist { path: actual_path } => {
-                assert_eq!(actual_path, input);
-            }
-            other => panic!("expected ArchiveDoesNotExist, got {other:?}"),
-        }
     }
 
     #[test]
