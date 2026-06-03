@@ -6,9 +6,12 @@
 
 A simple but *s*mart *a*rchiving and e*x*traction tool.
 
-Will automatically detect archive type and extract correctly, you no longer need to google tar flags.
+Will automatically detect archive type and extract correctly, you no longer need to look up tar flags.
 
 sax is developed for linux only, I have no interest into testing targets I don't personally use, but feel free to contribute.
+
+sax supports the following archive formats: zip, tar, tar.gz, tgz, tar.xz, txz, tar.bz2, tbz2,
+tar.zst, tzst, 7z, rar.
 
 ## Installation
 
@@ -34,23 +37,22 @@ sax <archive> <out>
 ```
 
 Extracts the contents of an archive into the output directory, creating it if needed.
-If the archive contains a single top-level directory, sax strips it by default
-and extracts that directory's contents directly into the output directory.
 
-This can be controlled by setting your preference in the config file. 
-Configuration is stored in `~/.config/sax/config.yaml` by default,
-or `$XDG_CONFIG_HOME/sax/config.yaml` when `XDG_CONFIG_HOME` is set.
+### Configuration
 
-Alternatively, you can use `--strip` or `--no-strip` to override the configured behavior for a
-single extraction.
+sax stores configuration in `~/.config/sax/config.yaml` by default, or
+`$XDG_CONFIG_HOME/sax/config.yaml` when `XDG_CONFIG_HOME` is set.
 
-Supported archive formats: zip, tar, tar.gz, tgz, tar.xz, txz, tar.bz2, tbz2, tar.zst, tzst, 7z, rar.
+- `extract_prefs.strip_top_level_dir`: controls whether sax removes a single
+  top-level directory from an archive before extracting into the output
+  directory. Defaults to `true`.
 
-```bash
-sax input.zip out/
-sax backup.tar.gz restored/
-sax --no-strip package.zip restored/
-```
+### Optional flags
+
+These flags override configuration settings for a single execution.
+
+- `--strip` removes a single top-level directory.
+- `--no-strip` keeps a single top-level directory.
 
 ## Todo
 
