@@ -238,7 +238,7 @@ fn detect_archive_type(path: &Path) -> Result<ArchiveType, ExtractError> {
 }
 
 pub fn is_archive(path: &Path) -> bool {
-    path.exists() && detect_archive_type(path).is_ok()
+    detect_archive_type(path).is_ok()
 }
 
 #[cfg(test)]
