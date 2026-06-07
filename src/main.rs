@@ -4,6 +4,7 @@ use clap::Parser;
 
 use crate::cli::Cli;
 
+mod archive;
 mod cli;
 mod config;
 mod extract;

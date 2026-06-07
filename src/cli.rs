@@ -1,10 +1,12 @@
 use std::io::{self, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use anyhow::Context;
 use clap::{CommandFactory, Parser};
+use itertools::Itertools;
 use thiserror::Error;
 
+use crate::archive::{ArchiveError, create_archive};
 use crate::config::Config;
 use crate::extract::{ExtractError, extract_archive, is_archive};
 use crate::util::prompt::{Prompt, Prompter};
@@ -40,14 +42,18 @@ pub enum AppError {
     ArchiveAlreadyExists { path: PathBuf },
     #[error("{0}")]
     InvalidArgs(String),
-    #[error("creating archives is not implemented yet")]
-    CreateNotImplemented,
     #[error("could not extract archive {archive} to {out}: {source}")]
     Extract {
         archive: PathBuf,
         out: PathBuf,
         #[source]
         source: ExtractError,
+    },
+    #[error("could not create archive {out}: {source}")]
+    Archive {
+        out: PathBuf,
+        #[source]
+        source: ArchiveError,
     },
     #[error(transparent)]
     Other(#[from] anyhow::Error),
@@ -96,7 +102,14 @@ impl Cli {
                     }
                 })
             }
-            Action::Create { .. } => Err(AppError::CreateNotImplemented),
+            Action::Create { inputs, archive } => {
+                let input_paths: Vec<&Path> = inputs.iter().map(|i| i.as_path()).unique().collect();
+
+                create_archive(input_paths, &archive).map_err(|source| AppError::Archive {
+                    out: archive.to_path_buf(),
+                    source,
+                })
+            }
         }
     }
 
@@ -218,7 +231,6 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let archive = dir.path().join("input.zip");
         let out = dir.path().join("out");
-
         let mut prompt = MockPrompt::new();
         prompt.expect_path().once().return_const(out.clone());
 
