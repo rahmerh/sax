@@ -123,7 +123,7 @@ fn parse_action(paths: Vec<PathBuf>, prompt: &dyn Prompt) -> Result<Action, AppE
     }
 
     if first.exists() {
-        return parse_create_action(paths);
+        return parse_create_action(paths, prompt);
     }
 
     Err(AppError::InvalidArgs(
@@ -154,18 +154,19 @@ fn parse_extract_action(paths: Vec<PathBuf>, prompt: &dyn Prompt) -> Result<Acti
     Ok(Action::Extract { archive, out })
 }
 
-fn parse_create_action(paths: Vec<PathBuf>) -> Result<Action, AppError> {
-    if paths.len() < 2 {
-        return Err(AppError::InvalidArgs(
-            "archiving expects one or more input paths followed by an archive name".to_string(),
-        ));
+fn parse_create_action(paths: Vec<PathBuf>, prompt: &dyn Prompt) -> Result<Action, AppError> {
+    let inputs;
+    let out;
+    if paths.len() == 1 {
+        inputs = paths;
+        out = prompt.path("Where do you want to create the archive?");
+    } else {
+        out = paths
+            .last()
+            .expect("paths has at least two entries")
+            .clone();
+        inputs = paths[..paths.len() - 1].to_vec();
     }
-
-    let out = paths
-        .last()
-        .expect("paths has at least two entries")
-        .clone();
-    let inputs = paths[..paths.len() - 1].to_vec();
 
     for input in &inputs {
         if !input.exists() {
@@ -191,31 +192,18 @@ fn parse_create_action(paths: Vec<PathBuf>) -> Result<Action, AppError> {
 
 #[cfg(test)]
 mod tests {
+    use crate::util::prompt::MockPrompt;
+
     use super::*;
+    use mockall::predicate::eq;
     use std::fs::File;
     use tempfile::TempDir;
-
-    struct TestPrompt {
-        out: PathBuf,
-    }
-
-    impl Prompt for TestPrompt {
-        fn path(&self, _message: &str) -> PathBuf {
-            self.out.clone()
-        }
-    }
-
-    fn test_prompt() -> TestPrompt {
-        TestPrompt {
-            out: PathBuf::from("prompted-out"),
-        }
-    }
 
     #[test]
     fn parse_action_should_return_err_when_no_paths_given() {
         // Arrange
         let input = vec![];
-        let prompt = test_prompt();
+        let prompt = MockPrompt::new();
 
         // Act
         let actual = parse_action(input, &prompt);
@@ -230,7 +218,10 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let archive = dir.path().join("input.zip");
         let out = dir.path().join("out");
-        let prompt = TestPrompt { out: out.clone() };
+
+        let mut prompt = MockPrompt::new();
+        prompt.expect_path().once().return_const(out.clone());
+
         File::create(&archive).unwrap();
 
         // Act
@@ -245,7 +236,7 @@ mod tests {
         // Arrange
         let dir = TempDir::new().unwrap();
         let archive = dir.path().join("input.zip");
-        let prompt = test_prompt();
+        let prompt = MockPrompt::new();
         File::create(&archive).unwrap();
 
         // Act
@@ -264,7 +255,7 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let archive = dir.path().join("input.zip");
         let input = dir.path().join("file.txt");
-        let prompt = test_prompt();
+        let prompt = MockPrompt::new();
         File::create(&archive).unwrap();
         File::create(&input).unwrap();
 
@@ -284,7 +275,7 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let archive = dir.path().join("input.zip");
         let out = dir.path().join("out");
-        let prompt = test_prompt();
+        let prompt = MockPrompt::new();
         File::create(&archive).unwrap();
 
         // Act
@@ -295,18 +286,30 @@ mod tests {
     }
 
     #[test]
-    fn parse_action_should_return_err_when_only_one_file_path_given() {
+    fn parse_action_should_prompt_for_archive_when_only_one_input_given() {
         // Arrange
         let dir = TempDir::new().unwrap();
         let input = dir.path().join("input.txt");
-        let prompt = test_prompt();
+        let out = dir.path().join("out.zip");
+        let mut prompt = MockPrompt::new();
+        prompt
+            .expect_path()
+            .with(eq("Where do you want to create the archive?"))
+            .once()
+            .return_const(out.clone());
         File::create(&input).unwrap();
 
         // Act
-        let actual = parse_action(vec![input], &prompt);
+        let actual = parse_action(vec![input.clone()], &prompt);
 
         // Assert
-        assert!(matches!(actual.unwrap_err(), AppError::InvalidArgs(_)));
+        assert_eq!(
+            actual.unwrap(),
+            Action::Create {
+                inputs: vec![input],
+                archive: out
+            }
+        );
     }
 
     #[test]
@@ -316,7 +319,7 @@ mod tests {
         let input = dir.path().join("input.txt");
         let second_input = dir.path().join("input2.txt");
         let out = dir.path().join("out.zip");
-        let prompt = test_prompt();
+        let prompt = MockPrompt::new();
 
         File::create(&input).unwrap();
 
@@ -336,7 +339,7 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let input = dir.path().join("input.txt");
         let out = dir.path().join("out.zip");
-        let prompt = test_prompt();
+        let prompt = MockPrompt::new();
 
         File::create(&input).unwrap();
         File::create(&out).unwrap();
@@ -357,7 +360,7 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let input = dir.path().join("input.txt");
         let out = dir.path().join("out.foo");
-        let prompt = test_prompt();
+        let prompt = MockPrompt::new();
 
         File::create(&input).unwrap();
 
@@ -378,7 +381,7 @@ mod tests {
         let input = dir.path().join("file.txt");
         let second_input = dir.path().join("file2.txt");
         let out = dir.path().join("input.zip");
-        let prompt = test_prompt();
+        let prompt = MockPrompt::new();
 
         File::create(&input).unwrap();
         File::create(&second_input).unwrap();

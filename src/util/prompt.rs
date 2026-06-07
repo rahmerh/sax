@@ -4,6 +4,7 @@ use dialoguer::Input;
 
 use crate::theme;
 
+#[cfg_attr(test, mockall::automock)]
 pub trait Prompt {
     fn path(&self, message: &str) -> PathBuf;
 }
