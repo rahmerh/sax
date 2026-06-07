@@ -10,8 +10,8 @@ Will automatically detect archive type and extract correctly, you no longer need
 
 sax is developed for linux only, I have no interest into testing targets I don't personally use, but feel free to contribute.
 
-sax supports the following archive formats: zip, tar, tar.gz, tgz, tar.xz, txz, tar.bz2, tbz2,
-tar.zst, tzst, 7z, rar.
+sax can create and extract zip, tar, tar.gz, tgz, tar.xz, txz, tar.bz2,
+tbz2, tar.zst, tzst, and 7z archives. RAR archives can only be extracted.
 
 ## Installation
 
@@ -32,11 +32,25 @@ cargo install sax
 
 ## Usage
 
+Arguments are positional: input(s) come first and the output is always last. When
+the output is omitted, sax prompts for it.
+
+#### Extracting archives
+
 ```bash
 sax <archive> <out>
 ```
 
 Extracts the contents of an archive into the output directory, creating it if needed.
+
+#### Archiving files and directories
+
+```bash
+sax <input>... <archive>
+```
+
+Creates an archive containing one or more input files or directories, creating
+all required subdirectories.
 
 ### Configuration
 
@@ -53,14 +67,3 @@ These flags override configuration settings for a single execution.
 
 - `--strip` removes a single top-level directory.
 - `--no-strip` keeps a single top-level directory.
-
-## Todo
-
-- [x] Extracting zip archives
-- [x] Extracting tar archives
-- [x] Extracting 7z archives
-- [x] Extracting rar archives
-- [ ] Creating archives
-    - [ ] Smart mode (automatically detect best archive for use case)
-    - [ ] Manual mode (provide required format)
-    - [ ] Override options
