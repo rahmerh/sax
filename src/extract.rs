@@ -1,4 +1,3 @@
-use std::ffi::OsStr;
 use std::fs::{self, File};
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
@@ -8,18 +7,20 @@ use bzip2::read::BzDecoder;
 use flate2::read::GzDecoder;
 use tar::EntryType;
 use thiserror::Error;
+
+use crate::config::ExtractPrefs;
 use xz2::read::XzDecoder;
 use zstd::stream::read::Decoder as ZstdDecoder;
 
 use crate::util::fs::{
-    UnsafePathError, move_dir_contents, safe_join, set_permissions, single_child_dir_or_self,
-    write_file_from_reader,
+    ArchiveType, DetectArchiveTypeError, UnsafePathError, detect_archive_type, move_dir_contents,
+    safe_join, set_permissions, single_child_dir_or_self, write_file_from_reader,
 };
 
 #[derive(Debug, Error)]
 pub enum ExtractError {
-    #[error("unsupported archive type: {path}")]
-    UnsupportedArchiveType { path: PathBuf },
+    #[error(transparent)]
+    UnsupportedArchiveType(#[from] DetectArchiveTypeError),
     #[error("failed to create output directory '{path}': {source}")]
     CreateOutputDir {
         path: PathBuf,
@@ -55,29 +56,13 @@ pub enum ExtractError {
     Rar(#[from] unrar_ng::error::UnrarError),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ArchiveType {
-    Zip,
-    Tar,
-    TarGz,
-    TarXz,
-    TarBz2,
-    TarZst,
-    SevenZip,
-    Rar,
-}
-
-pub fn extract_archive(
-    path: &Path,
-    out: &Path,
-    strip_top_level_dir: bool,
-) -> Result<(), ExtractError> {
+pub fn extract_archive(path: &Path, out: &Path, prefs: &ExtractPrefs) -> Result<(), ExtractError> {
     fs::create_dir_all(out).map_err(|source| ExtractError::CreateOutputDir {
         path: out.to_path_buf(),
         source,
     })?;
 
-    if strip_top_level_dir {
+    if prefs.strip_top_level_dir {
         let ts = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
@@ -207,32 +192,6 @@ fn extract_rar(path: &Path, out: &Path) -> Result<(), ExtractError> {
     Ok(())
 }
 
-fn detect_archive_type(path: &Path) -> Result<ArchiveType, ExtractError> {
-    let name = path
-        .file_name()
-        .and_then(OsStr::to_str)
-        .unwrap_or_default()
-        .to_lowercase();
-
-    match name.as_str() {
-        name if name.ends_with(".zip") => Ok(ArchiveType::Zip),
-        name if name.ends_with(".tar") => Ok(ArchiveType::Tar),
-        name if name.ends_with(".tar.gz") || name.ends_with(".tgz") => Ok(ArchiveType::TarGz),
-        name if name.ends_with(".tar.xz") || name.ends_with(".txz") => Ok(ArchiveType::TarXz),
-        name if name.ends_with(".tar.bz2") || name.ends_with(".tbz2") => Ok(ArchiveType::TarBz2),
-        name if name.ends_with(".tar.zst") || name.ends_with(".tzst") => Ok(ArchiveType::TarZst),
-        name if name.ends_with(".7z") => Ok(ArchiveType::SevenZip),
-        name if name.ends_with(".rar") => Ok(ArchiveType::Rar),
-        _ => Err(ExtractError::UnsupportedArchiveType {
-            path: path.to_path_buf(),
-        }),
-    }
-}
-
-pub fn is_archive(path: &Path) -> bool {
-    detect_archive_type(path).is_ok()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -242,60 +201,6 @@ mod tests {
     use std::io::Write;
     use tempfile::TempDir;
     use zip::write::SimpleFileOptions;
-
-    #[test]
-    fn detect_archive_type_should_assert_correct_archive_type_enum() {
-        // Arrange
-        let archive_types = [
-            ("test.zip", ArchiveType::Zip),
-            ("test.tar", ArchiveType::Tar),
-            ("test.tar.gz", ArchiveType::TarGz),
-            ("test.tgz", ArchiveType::TarGz),
-            ("test.tar.xz", ArchiveType::TarXz),
-            ("test.txz", ArchiveType::TarXz),
-            ("test.tar.bz2", ArchiveType::TarBz2),
-            ("test.tbz2", ArchiveType::TarBz2),
-            ("test.tar.zst", ArchiveType::TarZst),
-            ("test.tzst", ArchiveType::TarZst),
-            ("test.7z", ArchiveType::SevenZip),
-            ("test.rar", ArchiveType::Rar),
-        ];
-
-        // Assert
-        for (name, expected) in archive_types {
-            let actual = detect_archive_type(Path::new(name)).unwrap();
-
-            assert_eq!(actual, expected);
-        }
-    }
-
-    #[test]
-    fn is_archive_should_return_true_when_correct_archive_name_given() {
-        // Arrange
-        let dir = TempDir::new().unwrap();
-        let path = dir.path().join("a.tar.gz");
-        File::create(&path).unwrap();
-
-        // Act
-        let actual = is_archive(&path);
-
-        // Assert
-        assert!(actual);
-    }
-
-    #[test]
-    fn is_archive_should_return_false_when_incorrect_archive_name_given() {
-        // Arrange
-        let dir = TempDir::new().unwrap();
-        let path = dir.path().join("foo");
-        File::create(&path).unwrap();
-
-        // Act
-        let actual = is_archive(&path);
-
-        // Assert
-        assert!(!actual);
-    }
 
     #[test]
     fn extract_archive_should_extract_zip_into_output_directory() {
@@ -314,7 +219,14 @@ mod tests {
         );
 
         // Act
-        extract_archive(&archive_path, &out_dir, true).unwrap();
+        extract_archive(
+            &archive_path,
+            &out_dir,
+            &ExtractPrefs {
+                strip_top_level_dir: true,
+            },
+        )
+        .unwrap();
 
         // Assert
         assert_eq!(
@@ -342,7 +254,14 @@ mod tests {
         );
 
         // Act
-        extract_archive(&archive_path, &out_dir, true).unwrap();
+        extract_archive(
+            &archive_path,
+            &out_dir,
+            &ExtractPrefs {
+                strip_top_level_dir: true,
+            },
+        )
+        .unwrap();
 
         // Assert
         assert_eq!(
@@ -372,7 +291,14 @@ mod tests {
         create_gzip(&tar_path, &archive_path);
 
         // Act
-        extract_archive(&archive_path, &out_dir, true).unwrap();
+        extract_archive(
+            &archive_path,
+            &out_dir,
+            &ExtractPrefs {
+                strip_top_level_dir: true,
+            },
+        )
+        .unwrap();
 
         // Assert
         assert_eq!(
@@ -403,7 +329,14 @@ mod tests {
         );
 
         // Act
-        extract_archive(&archive_path, &out_dir, true).unwrap();
+        extract_archive(
+            &archive_path,
+            &out_dir,
+            &ExtractPrefs {
+                strip_top_level_dir: true,
+            },
+        )
+        .unwrap();
 
         // Assert
         assert_eq!(
@@ -433,7 +366,14 @@ mod tests {
         );
 
         // Act
-        extract_archive(&archive_path, &out_dir, false).unwrap();
+        extract_archive(
+            &archive_path,
+            &out_dir,
+            &ExtractPrefs {
+                strip_top_level_dir: false,
+            },
+        )
+        .unwrap();
 
         // Assert
         assert_eq!(
@@ -462,7 +402,14 @@ mod tests {
         sevenz_rust::compress_to_path(&input_dir, &archive_path).unwrap();
 
         // Act
-        extract_archive(&archive_path, &out_dir, true).unwrap();
+        extract_archive(
+            &archive_path,
+            &out_dir,
+            &ExtractPrefs {
+                strip_top_level_dir: true,
+            },
+        )
+        .unwrap();
 
         // Assert
         assert_eq!(
@@ -488,7 +435,14 @@ mod tests {
         create_fixture_archive(&dir.path().join("test.part02.rar"), TEST_RAR_PART_2);
 
         // Act
-        extract_archive(&archive_path, &out_dir, true).unwrap();
+        extract_archive(
+            &archive_path,
+            &out_dir,
+            &ExtractPrefs {
+                strip_top_level_dir: true,
+            },
+        )
+        .unwrap();
 
         // Assert
         let actual = fs::read(out_dir.join("test.txt")).unwrap();

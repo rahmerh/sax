@@ -8,7 +8,8 @@ use thiserror::Error;
 
 use crate::archive::{ArchiveError, create_archive};
 use crate::config::Config;
-use crate::extract::{ExtractError, extract_archive, is_archive};
+use crate::extract::{ExtractError, extract_archive};
+use crate::util::fs::is_archive;
 use crate::util::prompt::{Prompt, Prompter};
 
 #[derive(Debug, Parser)]
@@ -84,17 +85,17 @@ impl Cli {
         let prompt = Prompter;
         let action = parse_action(self.paths.clone(), &prompt)?;
 
-        let strip_top_level_dir = if self.strip {
-            true
+        let mut config = Config::load_or_create()?;
+
+        if self.strip {
+            config.extract_prefs.strip_top_level_dir = true;
         } else if self.no_strip {
-            false
-        } else {
-            Config::load_or_create()?.extract_prefs.strip_top_level_dir
-        };
+            config.extract_prefs.strip_top_level_dir = false;
+        }
 
         match action {
             Action::Extract { archive, out } => {
-                extract_archive(&archive, &out, strip_top_level_dir).map_err(|source| {
+                extract_archive(&archive, &out, &config.extract_prefs).map_err(|source| {
                     AppError::Extract {
                         archive: archive.to_path_buf(),
                         out: out.to_path_buf(),
@@ -105,9 +106,11 @@ impl Cli {
             Action::Create { inputs, archive } => {
                 let input_paths: Vec<&Path> = inputs.iter().map(|i| i.as_path()).unique().collect();
 
-                create_archive(input_paths, &archive).map_err(|source| AppError::Archive {
-                    out: archive.to_path_buf(),
-                    source,
+                create_archive(input_paths, &archive, &config.create_prefs).map_err(|source| {
+                    AppError::Archive {
+                        out: archive.to_path_buf(),
+                        source,
+                    }
                 })
             }
         }
@@ -168,18 +171,17 @@ fn parse_extract_action(paths: Vec<PathBuf>, prompt: &dyn Prompt) -> Result<Acti
 }
 
 fn parse_create_action(paths: Vec<PathBuf>, prompt: &dyn Prompt) -> Result<Action, AppError> {
-    let inputs;
-    let out;
-    if paths.len() == 1 {
-        inputs = paths;
-        out = prompt.path("Where do you want to create the archive?");
+    let last = paths
+        .last()
+        .expect("parse_create_action requires at least one path");
+    let (inputs, out) = if !last.exists() && is_archive(last) {
+        (paths[..paths.len() - 1].to_vec(), last.to_path_buf())
     } else {
-        out = paths
-            .last()
-            .expect("paths has at least two entries")
-            .clone();
-        inputs = paths[..paths.len() - 1].to_vec();
-    }
+        (
+            paths,
+            prompt.path("Where do you want to create the archive?"),
+        )
+    };
 
     for input in &inputs {
         if !input.exists() {
@@ -346,44 +348,63 @@ mod tests {
     }
 
     #[test]
-    fn parse_action_should_return_err_when_output_already_exists() {
+    fn parse_action_should_prompt_when_last_path_exists() {
         // Arrange
         let dir = TempDir::new().unwrap();
         let input = dir.path().join("input.txt");
-        let out = dir.path().join("out.zip");
-        let prompt = MockPrompt::new();
+        let second_input = dir.path().join("input.zip");
+        let out = dir.path().join("out.tar");
+        let mut prompt = MockPrompt::new();
+        prompt
+            .expect_path()
+            .with(eq("Where do you want to create the archive?"))
+            .once()
+            .return_const(out.clone());
 
         File::create(&input).unwrap();
-        File::create(&out).unwrap();
+        File::create(&second_input).unwrap();
 
         // Act
-        let actual = parse_action(vec![input, out], &prompt);
+        let actual = parse_action(vec![input.clone(), second_input.clone()], &prompt);
 
         // Assert
-        assert!(matches!(
-            actual.unwrap_err(),
-            AppError::ArchiveAlreadyExists { path: _ }
-        ));
+        assert_eq!(
+            actual.unwrap(),
+            Action::Create {
+                inputs: vec![input, second_input],
+                archive: out,
+            }
+        );
     }
 
     #[test]
-    fn parse_action_should_return_err_when_output_is_not_an_archive() {
+    fn parse_action_should_prompt_when_last_path_is_not_an_archive() {
         // Arrange
         let dir = TempDir::new().unwrap();
         let input = dir.path().join("input.txt");
-        let out = dir.path().join("out.foo");
-        let prompt = MockPrompt::new();
+        let second_input = dir.path().join("input.foo");
+        let out = dir.path().join("out.zip");
+        let mut prompt = MockPrompt::new();
+        prompt
+            .expect_path()
+            .with(eq("Where do you want to create the archive?"))
+            .once()
+            .return_const(out.clone());
 
         File::create(&input).unwrap();
+        File::create(&second_input).unwrap();
 
         // Act
-        let actual = parse_action(vec![input, out], &prompt);
+        let actual = parse_action(vec![input.clone(), second_input.clone()], &prompt);
 
         // Assert
-        assert!(matches!(
-            actual.unwrap_err(),
-            AppError::UnsupportedArchiveName { path: _ }
-        ));
+        assert_eq!(
+            actual.unwrap(),
+            Action::Create {
+                inputs: vec![input, second_input],
+                archive: out,
+            }
+        );
     }
 
     #[test]

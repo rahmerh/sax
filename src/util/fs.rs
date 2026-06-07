@@ -1,3 +1,4 @@
+use std::ffi::OsStr;
 use std::fs;
 use std::io::{self, Read};
 #[cfg(unix)]
@@ -14,6 +15,24 @@ pub enum UnsafePathError {
     Absolute,
     #[error("path traversal ('..') is not allowed")]
     Traversal,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ArchiveType {
+    Zip,
+    Tar,
+    TarGz,
+    TarXz,
+    TarBz2,
+    TarZst,
+    SevenZip,
+    Rar,
+}
+
+#[derive(Debug, Error)]
+#[error("unsupported archive type: {path}")]
+pub struct DetectArchiveTypeError {
+    path: PathBuf,
 }
 
 pub fn move_dir_contents(source_dir: &Path, out: &Path) -> io::Result<()> {
@@ -96,6 +115,32 @@ pub fn set_permissions(path: &Path, mode: u32) -> io::Result<()> {
     fs::set_permissions(path, fs::Permissions::from_mode(mode & 0o777))
 }
 
+pub fn detect_archive_type(path: &Path) -> Result<ArchiveType, DetectArchiveTypeError> {
+    let name = path
+        .file_name()
+        .and_then(OsStr::to_str)
+        .unwrap_or_default()
+        .to_lowercase();
+
+    match name.as_str() {
+        name if name.ends_with(".zip") => Ok(ArchiveType::Zip),
+        name if name.ends_with(".tar") => Ok(ArchiveType::Tar),
+        name if name.ends_with(".tar.gz") || name.ends_with(".tgz") => Ok(ArchiveType::TarGz),
+        name if name.ends_with(".tar.xz") || name.ends_with(".txz") => Ok(ArchiveType::TarXz),
+        name if name.ends_with(".tar.bz2") || name.ends_with(".tbz2") => Ok(ArchiveType::TarBz2),
+        name if name.ends_with(".tar.zst") || name.ends_with(".tzst") => Ok(ArchiveType::TarZst),
+        name if name.ends_with(".7z") => Ok(ArchiveType::SevenZip),
+        name if name.ends_with(".rar") => Ok(ArchiveType::Rar),
+        _ => Err(DetectArchiveTypeError {
+            path: path.to_path_buf(),
+        }),
+    }
+}
+
+pub fn is_archive(path: &Path) -> bool {
+    detect_archive_type(path).is_ok()
+}
+
 #[cfg(test)]
 mod tests {
     use tempfile::TempDir;
@@ -104,6 +149,56 @@ mod tests {
     use std::io::Cursor;
     #[cfg(unix)]
     use std::os::unix::fs::PermissionsExt;
+
+    #[test]
+    fn detect_archive_type_should_assert_correct_archive_type_enum() {
+        // Arrange
+        let archive_types = [
+            ("test.zip", ArchiveType::Zip),
+            ("test.tar", ArchiveType::Tar),
+            ("test.tar.gz", ArchiveType::TarGz),
+            ("test.tgz", ArchiveType::TarGz),
+            ("test.tar.xz", ArchiveType::TarXz),
+            ("test.txz", ArchiveType::TarXz),
+            ("test.tar.bz2", ArchiveType::TarBz2),
+            ("test.tbz2", ArchiveType::TarBz2),
+            ("test.tar.zst", ArchiveType::TarZst),
+            ("test.tzst", ArchiveType::TarZst),
+            ("test.7z", ArchiveType::SevenZip),
+            ("test.rar", ArchiveType::Rar),
+        ];
+
+        // Assert
+        for (name, expected) in archive_types {
+            let actual = detect_archive_type(Path::new(name)).unwrap();
+
+            assert_eq!(actual, expected);
+        }
+    }
+
+    #[test]
+    fn is_archive_should_return_true_when_correct_archive_name_given() {
+        // Arrange
+        let path = Path::new("a.tar.gz");
+
+        // Act
+        let actual = is_archive(path);
+
+        // Assert
+        assert!(actual);
+    }
+
+    #[test]
+    fn is_archive_should_return_false_when_incorrect_archive_name_given() {
+        // Arrange
+        let path = Path::new("foo");
+
+        // Act
+        let actual = is_archive(path);
+
+        // Assert
+        assert!(!actual);
+    }
 
     #[test]
     fn move_dir_contents_should_move_files_and_directories_into_output() {

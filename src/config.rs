@@ -5,14 +5,19 @@ use std::path::PathBuf;
 use anyhow::{Context, Result, anyhow};
 use serde::Deserialize;
 
-const DEFAULT_CONFIG: &str = "extract_prefs:\n  strip_top_level_dir: true\n";
+const DEFAULT_CONFIG: &str = "create_prefs: {}\nextract_prefs:\n  strip_top_level_dir: true\n";
 
 #[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
 #[serde(default)]
 #[derive(Default)]
 pub struct Config {
+    pub create_prefs: CreatePrefs,
     pub extract_prefs: ExtractPrefs,
 }
+
+#[derive(Debug, Clone, Copy, Deserialize, Default, PartialEq, Eq)]
+#[serde(default)]
+pub struct CreatePrefs {}
 
 #[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
 #[serde(default)]
@@ -83,5 +88,24 @@ mod tests {
             .extract_prefs
             .strip_top_level_dir
         );
+    }
+
+    #[test]
+    fn config_applies_extract_override() {
+        let mut config = Config::default();
+
+        config.apply_extract_overrides(Some(false));
+
+        assert!(!config.extract_prefs.strip_top_level_dir);
+    }
+
+    #[test]
+    fn config_preserves_extract_setting_without_override() {
+        let mut config: Config =
+            serde_yaml::from_str("extract_prefs:\n  strip_top_level_dir: false\n").unwrap();
+
+        config.apply_extract_overrides(None);
+
+        assert!(!config.extract_prefs.strip_top_level_dir);
     }
 }
