@@ -2,6 +2,7 @@ use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
 use anyhow::Context;
+use clap::builder::{IntoResettable, Resettable, StyledStr};
 use clap::{CommandFactory, Parser};
 use itertools::Itertools;
 use thiserror::Error;
@@ -12,15 +13,35 @@ use crate::extract::{ExtractError, extract_archive};
 use crate::util::fs::is_archive;
 use crate::util::prompt::{Prompt, Prompter};
 
+struct HelpTemplate;
+
+impl IntoResettable<StyledStr> for HelpTemplate {
+    fn into_resettable(self) -> Resettable<StyledStr> {
+        color_print::cstr!(
+            "\
+<bold>{name}</bold> {version}
+{about}
+
+{usage-heading}
+{tab}{usage}
+
+{all-args}{after-help}
+"
+        )
+        .into_resettable()
+    }
+}
+
 #[derive(Debug, Parser)]
 #[command(
     name = Cli::SAX,
     version,
     about = "Smart archiving and extracting utility",
-    after_help = Cli::SUPPORTED_ARCHIVE_FORMATS
+    after_help = Cli::SUPPORTED_ARCHIVE_FORMATS,
+    help_template = HelpTemplate
 )]
 pub struct Cli {
-    /// Paths to extract from or archive.
+    /// Paths to extract from or archive to.
     #[arg(value_name = "PATH")]
     paths: Vec<PathBuf>,
     /// Strip a single top-level directory when extracting.
@@ -74,7 +95,7 @@ enum Action {
 
 impl Cli {
     pub const SAX: &str = "sax";
-    pub const SUPPORTED_ARCHIVE_FORMATS: &str = "Supported archive formats: zip, tar, tar.gz, tgz, tar.xz, txz, tar.bz2, tbz2, tar.zst, tzst, 7z, rar.";
+    pub const SUPPORTED_ARCHIVE_FORMATS: &str = "Supported archive formats: zip, tar, tar.gz/tgz, tar.xz/txz, tar.bz2/tbz2, tar.zst/tzst, 7z, rar.";
 
     pub fn run(&self) -> Result<(), AppError> {
         if self.paths.is_empty() {
@@ -119,7 +140,7 @@ impl Cli {
     fn print_help(stdout: &mut dyn Write) -> Result<(), AppError> {
         let mut help = Vec::new();
         Self::command()
-            .write_long_help(&mut help)
+            .write_help(&mut help)
             .context("failed to render help")?;
         stdout.write_all(&help).context("failed to write help")?;
         writeln!(stdout).context("failed to write help")?;
@@ -210,6 +231,7 @@ mod tests {
     use crate::util::prompt::MockPrompt;
 
     use super::*;
+    use kernal::prelude::*;
     use mockall::predicate::eq;
     use std::fs::File;
     use tempfile::TempDir;
@@ -224,7 +246,7 @@ mod tests {
         let actual = parse_action(input, &prompt);
 
         // Assert
-        assert!(matches!(actual.unwrap_err(), AppError::InvalidArgs(_)));
+        assert_that!(matches!(actual.unwrap_err(), AppError::InvalidArgs(_))).is_true();
     }
 
     #[test]
@@ -242,7 +264,9 @@ mod tests {
         let actual = parse_action(vec![archive.clone()], &prompt);
 
         // Assert
-        assert_eq!(actual.unwrap(), Action::Extract { archive, out });
+        assert_that!(actual)
+            .to_value()
+            .is_equal_to(Action::Extract { archive, out });
     }
 
     #[test]
@@ -260,7 +284,7 @@ mod tests {
         );
 
         // Assert
-        assert!(matches!(actual.unwrap_err(), AppError::InvalidArgs(_)));
+        assert_that!(matches!(actual.unwrap_err(), AppError::InvalidArgs(_))).is_true();
     }
 
     #[test]
@@ -277,10 +301,11 @@ mod tests {
         let actual = parse_action(vec![archive, input], &prompt);
 
         // Assert
-        assert!(matches!(
+        assert_that!(matches!(
             actual.unwrap_err(),
             AppError::NotFolder { path: _ }
-        ));
+        ))
+        .is_true();
     }
 
     #[test]
@@ -296,7 +321,9 @@ mod tests {
         let actual = parse_action(vec![archive.clone(), out.clone()], &prompt);
 
         // Assert
-        assert_eq!(actual.unwrap(), Action::Extract { archive, out });
+        assert_that!(actual)
+            .to_value()
+            .is_equal_to(Action::Extract { archive, out });
     }
 
     #[test]
@@ -317,13 +344,10 @@ mod tests {
         let actual = parse_action(vec![input.clone()], &prompt);
 
         // Assert
-        assert_eq!(
-            actual.unwrap(),
-            Action::Create {
-                inputs: vec![input],
-                archive: out
-            }
-        );
+        assert_that!(actual).to_value().is_equal_to(Action::Create {
+            inputs: vec![input],
+            archive: out,
+        });
     }
 
     #[test]
@@ -341,10 +365,11 @@ mod tests {
         let actual = parse_action(vec![input, second_input, out], &prompt);
 
         // Assert
-        assert!(matches!(
+        assert_that!(matches!(
             actual.unwrap_err(),
             AppError::InputDoesNotExist { path: _ }
-        ));
+        ))
+        .is_true();
     }
 
     #[test]
@@ -368,13 +393,10 @@ mod tests {
         let actual = parse_action(vec![input.clone(), second_input.clone()], &prompt);
 
         // Assert
-        assert_eq!(
-            actual.unwrap(),
-            Action::Create {
-                inputs: vec![input, second_input],
-                archive: out,
-            }
-        );
+        assert_that!(actual).to_value().is_equal_to(Action::Create {
+            inputs: vec![input, second_input],
+            archive: out,
+        });
     }
 
     #[test]
@@ -398,13 +420,10 @@ mod tests {
         let actual = parse_action(vec![input.clone(), second_input.clone()], &prompt);
 
         // Assert
-        assert_eq!(
-            actual.unwrap(),
-            Action::Create {
-                inputs: vec![input, second_input],
-                archive: out,
-            }
-        );
+        assert_that!(actual).to_value().is_equal_to(Action::Create {
+            inputs: vec![input, second_input],
+            archive: out,
+        });
     }
 
     #[test]
@@ -426,12 +445,9 @@ mod tests {
         );
 
         // Assert
-        assert_eq!(
-            actual.unwrap(),
-            Action::Create {
-                inputs: vec![input, second_input],
-                archive: out
-            }
-        );
+        assert_that!(actual).to_value().is_equal_to(Action::Create {
+            inputs: vec![input, second_input],
+            archive: out,
+        });
     }
 }

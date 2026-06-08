@@ -202,3 +202,269 @@ fn input_name(path: &Path) -> Result<PathBuf, ArchiveError> {
             path: path.to_path_buf(),
         })
 }
+
+#[cfg(test)]
+mod tests {
+    use kernal::prelude::*;
+    use tempfile::TempDir;
+
+    use crate::{config::ExtractPrefs, extract::extract_archive};
+
+    use super::*;
+
+    #[test]
+    fn create_archive_should_return_err_when_trying_to_archive_as_rar() {
+        // Arrange
+        let temp_dir = TempDir::new().unwrap();
+        let inputs = vec![];
+        let archive = temp_dir.path().join("out.rar");
+        let prefs = CreatePrefs {};
+
+        // Act
+        let actual = create_archive(inputs, &archive, &prefs);
+
+        // Assert
+        assert_that!(&actual).is_err();
+        assert_that!(matches!(
+            actual.unwrap_err(),
+            ArchiveError::UnsupportedCreation { format: "RAR" }
+        ))
+        .is_true();
+    }
+
+    #[test]
+    fn create_archive_should_create_zip() {
+        // Arrange
+        let temp_dir = TempDir::new().unwrap();
+
+        let file = temp_dir.path().join("file.txt");
+        fs::write(&file, "foo").unwrap();
+
+        let archive = temp_dir.path().join("out.zip");
+
+        let prefs = CreatePrefs {};
+
+        // Act
+        create_archive(vec![file.as_path()], &archive, &prefs).unwrap();
+
+        // Assert
+        assert_that!(&archive).exists();
+
+        let extracted_dir = temp_dir.path().join("extracted");
+        extract_archive(
+            &archive,
+            &extracted_dir,
+            &ExtractPrefs {
+                strip_top_level_dir: false,
+            },
+        )
+        .unwrap();
+
+        assert_that!(extracted_dir.join("file.txt")).is_file_with_content("foo");
+    }
+
+    #[test]
+    fn create_archive_should_create_tar() {
+        // Arrange
+        let temp_dir = TempDir::new().unwrap();
+
+        let file = temp_dir.path().join("file.txt");
+        fs::write(&file, "foo").unwrap();
+
+        let archive = temp_dir.path().join("out.tar");
+
+        let prefs = CreatePrefs {};
+
+        // Act
+        create_archive(vec![file.as_path()], &archive, &prefs).unwrap();
+
+        // Assert
+        assert_that!(&archive).exists();
+
+        let extracted_dir = temp_dir.path().join("extracted");
+        extract_archive(
+            &archive,
+            &extracted_dir,
+            &ExtractPrefs {
+                strip_top_level_dir: false,
+            },
+        )
+        .unwrap();
+
+        assert_that!(extracted_dir.join("file.txt")).is_file_with_content("foo");
+    }
+
+    #[test]
+    fn create_archive_should_create_tar_gz() {
+        // Arrange
+        let temp_dir = TempDir::new().unwrap();
+
+        let file = temp_dir.path().join("file.txt");
+        fs::write(&file, "foo").unwrap();
+
+        let archive = temp_dir.path().join("out.tar.gz");
+
+        let prefs = CreatePrefs {};
+
+        // Act
+        create_archive(vec![file.as_path()], &archive, &prefs).unwrap();
+
+        // Assert
+        assert_that!(&archive).exists();
+
+        let extracted = temp_dir.path().join("extracted");
+        extract_archive(
+            &archive,
+            &extracted,
+            &ExtractPrefs {
+                strip_top_level_dir: false,
+            },
+        )
+        .unwrap();
+
+        assert_that!(extracted.join("file.txt")).is_file_with_content("foo");
+    }
+
+    #[test]
+    fn create_archive_should_create_tar_xz() {
+        // Arrange
+        let temp_dir = TempDir::new().unwrap();
+
+        let file = temp_dir.path().join("file.txt");
+        fs::write(&file, "foo").unwrap();
+
+        let archive = temp_dir.path().join("out.tar.xz");
+
+        let prefs = CreatePrefs {};
+
+        // Act
+        create_archive(vec![file.as_path()], &archive, &prefs).unwrap();
+
+        // Assert
+        assert_that!(&archive).exists();
+
+        let extracted_dir = temp_dir.path().join("extracted");
+        extract_archive(
+            &archive,
+            &extracted_dir,
+            &ExtractPrefs {
+                strip_top_level_dir: false,
+            },
+        )
+        .unwrap();
+
+        assert_that!(extracted_dir.join("file.txt")).is_file_with_content("foo");
+    }
+
+    #[test]
+    fn create_archive_should_create_tar_bz2() {
+        // Arrange
+        let temp_dir = TempDir::new().unwrap();
+
+        let file = temp_dir.path().join("file.txt");
+        fs::write(&file, "foo").unwrap();
+
+        let archive = temp_dir.path().join("out.tar.bz2");
+
+        let prefs = CreatePrefs {};
+
+        // Act
+        create_archive(vec![file.as_path()], &archive, &prefs).unwrap();
+
+        // Assert
+        assert_that!(&archive).exists();
+
+        let extracted_dir = temp_dir.path().join("extracted");
+        extract_archive(
+            &archive,
+            &extracted_dir,
+            &ExtractPrefs {
+                strip_top_level_dir: false,
+            },
+        )
+        .unwrap();
+
+        assert_that!(extracted_dir.join("file.txt")).is_file_with_content("foo");
+    }
+
+    #[test]
+    fn create_archive_should_create_tar_zst() {
+        // Arrange
+        let temp_dir = TempDir::new().unwrap();
+
+        let file = temp_dir.path().join("file.txt");
+        fs::write(&file, "foo").unwrap();
+
+        let archive = temp_dir.path().join("out.tar.zst");
+
+        let prefs = CreatePrefs {};
+
+        // Act
+        create_archive(vec![file.as_path()], &archive, &prefs).unwrap();
+
+        // Assert
+        assert_that!(&archive).exists();
+
+        let extracted = temp_dir.path().join("extracted");
+        extract_archive(
+            &archive,
+            &extracted,
+            &ExtractPrefs {
+                strip_top_level_dir: false,
+            },
+        )
+        .unwrap();
+
+        assert_that!(extracted.join("file.txt")).is_file_with_content("foo");
+    }
+
+    #[test]
+    fn create_archive_should_create_7z() {
+        // Arrange
+        let temp_dir = TempDir::new().unwrap();
+
+        let file = temp_dir.path().join("file.txt");
+        fs::write(&file, "foo").unwrap();
+
+        let archive = temp_dir.path().join("out.7z");
+
+        let prefs = CreatePrefs {};
+
+        // Act
+        create_archive(vec![file.as_path()], &archive, &prefs).unwrap();
+
+        // Assert
+        assert_that!(&archive).exists();
+
+        let extracted = temp_dir.path().join("extracted");
+        extract_archive(
+            &archive,
+            &extracted,
+            &ExtractPrefs {
+                strip_top_level_dir: false,
+            },
+        )
+        .unwrap();
+
+        assert_that!(extracted.join("file.txt")).is_file_with_content("foo");
+    }
+
+    #[test]
+    fn create_archive_should_create_missing_directories_when_required() {
+        // Arrange
+        let temp_dir = TempDir::new().unwrap();
+
+        let file = temp_dir.path().join("file.txt");
+        fs::write(&file, "foo").unwrap();
+
+        let archive = temp_dir.path().join("missing-dir").join("out.zip");
+
+        let prefs = CreatePrefs {};
+
+        // Act
+        create_archive(vec![file.as_path()], &archive, &prefs).unwrap();
+
+        // Assert
+        assert_that!(&archive).exists();
+    }
+}
