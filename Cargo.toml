@@ -1,6 +1,6 @@
 [package]
 name = "sax"
-version = "0.3.0"
+version = "1.0.0"
 edition = "2024"
 description = "A simple but smart archiving and extraction tool."
 license = "MIT"
