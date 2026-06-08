@@ -1,4 +1,3 @@
-use std::ffi::OsStr;
 use std::fs;
 use std::io::{self, Read};
 #[cfg(unix)]
@@ -28,6 +27,21 @@ pub enum ArchiveType {
     SevenZip,
     Rar,
 }
+
+const ARCHIVE_SUFFIXES: [(&str, ArchiveType); 12] = [
+    ("tar.bz2", ArchiveType::TarBz2),
+    ("tar.zst", ArchiveType::TarZst),
+    ("tar.gz", ArchiveType::TarGz),
+    ("tar.xz", ArchiveType::TarXz),
+    ("tbz2", ArchiveType::TarBz2),
+    ("tzst", ArchiveType::TarZst),
+    ("zip", ArchiveType::Zip),
+    ("tar", ArchiveType::Tar),
+    ("tgz", ArchiveType::TarGz),
+    ("txz", ArchiveType::TarXz),
+    ("7z", ArchiveType::SevenZip),
+    ("rar", ArchiveType::Rar),
+];
 
 #[derive(Debug, Error)]
 #[error("unsupported archive type: {path}")]
@@ -116,29 +130,34 @@ pub fn set_permissions(path: &Path, mode: u32) -> io::Result<()> {
 }
 
 pub fn detect_archive_type(path: &Path) -> Result<ArchiveType, DetectArchiveTypeError> {
-    let name = path
+    let lowercase_name = path
         .file_name()
-        .and_then(OsStr::to_str)
+        .and_then(|name| name.to_str())
         .unwrap_or_default()
         .to_lowercase();
 
-    match name.as_str() {
-        name if name.ends_with(".zip") => Ok(ArchiveType::Zip),
-        name if name.ends_with(".tar") => Ok(ArchiveType::Tar),
-        name if name.ends_with(".tar.gz") || name.ends_with(".tgz") => Ok(ArchiveType::TarGz),
-        name if name.ends_with(".tar.xz") || name.ends_with(".txz") => Ok(ArchiveType::TarXz),
-        name if name.ends_with(".tar.bz2") || name.ends_with(".tbz2") => Ok(ArchiveType::TarBz2),
-        name if name.ends_with(".tar.zst") || name.ends_with(".tzst") => Ok(ArchiveType::TarZst),
-        name if name.ends_with(".7z") => Ok(ArchiveType::SevenZip),
-        name if name.ends_with(".rar") => Ok(ArchiveType::Rar),
-        _ => Err(DetectArchiveTypeError {
+    ARCHIVE_SUFFIXES
+        .iter()
+        .find(|(suffix, _)| lowercase_name.ends_with(suffix))
+        .map(|(_, archive_type)| *archive_type)
+        .ok_or_else(|| DetectArchiveTypeError {
             path: path.to_path_buf(),
-        }),
-    }
+        })
 }
 
 pub fn is_archive(path: &Path) -> bool {
     detect_archive_type(path).is_ok()
+}
+
+pub fn archive_stem(path: &Path) -> Option<&str> {
+    let name = path.file_name()?.to_str()?;
+    let lowercase_name = name.to_lowercase();
+    let (suffix, _) = ARCHIVE_SUFFIXES
+        .iter()
+        .find(|(suffix, _)| lowercase_name.ends_with(suffix))?;
+    let stem = name.get(..name.len() - suffix.len())?.strip_suffix('.')?;
+
+    (!stem.is_empty()).then_some(stem)
 }
 
 #[cfg(test)]
@@ -199,6 +218,43 @@ mod tests {
 
         // Assert
         assert_that!(actual).is_false();
+    }
+
+    #[test]
+    fn archive_stem_should_strip_full_archive_extension() {
+        for (archive, expected) in [
+            ("test.zip", "test"),
+            ("test.tar", "test"),
+            ("test.tar.gz", "test"),
+            ("test.tgz", "test"),
+            ("test.tar.xz", "test"),
+            ("test.txz", "test"),
+            ("test.tar.bz2", "test"),
+            ("test.tbz2", "test"),
+            ("test.tar.zst", "test"),
+            ("test.tzst", "test"),
+            ("test.7z", "test"),
+            ("test.rar", "test"),
+        ] {
+            assert_that!(archive_stem(Path::new(archive))).is_equal_to(Some(expected));
+        }
+    }
+
+    #[test]
+    fn archive_stem_should_only_return_the_basename() {
+        assert_that!(archive_stem(Path::new("/tmp/my.archive.tar.gz")))
+            .is_equal_to(Some("my.archive"));
+    }
+
+    #[test]
+    fn archive_stem_should_handle_uppercase_extensions() {
+        assert_that!(archive_stem(Path::new("archive.TAR.GZ"))).is_equal_to(Some("archive"));
+    }
+
+    #[test]
+    fn archive_stem_should_return_none_for_unsupported_or_empty_names() {
+        assert_that!(archive_stem(Path::new("archive.txt"))).is_none();
+        assert_that!(archive_stem(Path::new(".zip"))).is_none();
     }
 
     #[test]

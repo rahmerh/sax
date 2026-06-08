@@ -47,26 +47,21 @@ sax folder/ file.txt ... archive.tzst
 ```
 
 Creates an archive containing one or more input files or directories, creating
-all required subdirectories.
+all missing subdirectories.
 
 ### Configuration
 
 sax stores configuration in `~/.config/sax/config.yaml` by default, or
 `$XDG_CONFIG_HOME/sax/config.yaml` when `XDG_CONFIG_HOME` is set.
 
-- `extract_prefs.strip_top_level_dir`: controls whether sax removes a single
+#### `extract_prefs`
+
+- `strip_top_level_dir`: controls whether sax removes a single
   top-level directory from an archive before extracting into the output
   directory. Defaults to `true`.
-- `extract_prefs.output_mode`: controls how the extraction output directory is
+- `output_mode`: controls how the extraction output directory is
   selected. Defaults to `prompt`.
   - `auto`: derives a directory beside the archive from its name.
   - `prompt`: uses an output directory argument when provided, otherwise asks
     interactively.
   - `manual`: requires an output directory argument.
-
-### Optional flags
-
-These flags override configuration settings for a single execution.
-
-- `--strip` removes a single top-level directory.
-- `--no-strip` keeps a single top-level directory.

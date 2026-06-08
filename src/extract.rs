@@ -194,6 +194,8 @@ fn extract_rar(path: &Path, out: &Path) -> Result<(), ExtractError> {
 
 #[cfg(test)]
 mod tests {
+    use crate::config::OutputModes;
+
     use super::*;
     use flate2::Compression;
     use flate2::write::GzEncoder;
@@ -225,6 +227,7 @@ mod tests {
             &out_dir,
             &ExtractPrefs {
                 strip_top_level_dir: true,
+                output_mode: OutputModes::Manual,
             },
         )
         .unwrap();
@@ -253,6 +256,7 @@ mod tests {
             &out_dir,
             &ExtractPrefs {
                 strip_top_level_dir: true,
+                output_mode: OutputModes::Manual,
             },
         )
         .unwrap();
@@ -283,6 +287,7 @@ mod tests {
             &out_dir,
             &ExtractPrefs {
                 strip_top_level_dir: true,
+                output_mode: OutputModes::Manual,
             },
         )
         .unwrap();
@@ -314,6 +319,7 @@ mod tests {
             &out_dir,
             &ExtractPrefs {
                 strip_top_level_dir: true,
+                output_mode: OutputModes::Manual,
             },
         )
         .unwrap();
@@ -345,6 +351,7 @@ mod tests {
             &out_dir,
             &ExtractPrefs {
                 strip_top_level_dir: false,
+                output_mode: OutputModes::Manual,
             },
         )
         .unwrap();
@@ -375,6 +382,7 @@ mod tests {
             &out_dir,
             &ExtractPrefs {
                 strip_top_level_dir: true,
+                output_mode: OutputModes::Manual,
             },
         )
         .unwrap();
@@ -401,6 +409,7 @@ mod tests {
             &out_dir,
             &ExtractPrefs {
                 strip_top_level_dir: true,
+                output_mode: OutputModes::Manual,
             },
         )
         .unwrap();
