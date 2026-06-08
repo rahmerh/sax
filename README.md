@@ -1,10 +1,10 @@
-# `sax`
+# `sax` 🎷
 
 ![License](https://img.shields.io/github/license/rahmerh/sax)
 [![Crates.io](https://img.shields.io/crates/v/sax)](https://crates.io/crates/sax)
 [![Publish crate](https://github.com/rahmerh/sax/actions/workflows/publish.yml/badge.svg)](https://github.com/rahmerh/sax/actions/workflows/publish.yml)
 
-A simple but *s*mart *a*rchiving and e*x*traction tool.
+A simple but smart archiving and extraction tool.
 
 Will automatically detect archive type and extract correctly, you no longer need to look up tar flags.
 
@@ -17,22 +17,12 @@ tbz2, tar.zst, tzst, and 7z archives. RAR archives can only be extracted.
 
 ### From the AUR
 
-Arch users can install the stable [`sax`](https://aur.archlinux.org/packages/sax)
+Arch users can install the stable [`sax`](https://aur.archlinux.org/packages/sax) or the latest commit [`sax-git`](https://aur.archlinux.org/packages/sax-git)
 package with an AUR helper such as [`yay`](https://github.com/Jguer/yay):
 
 ```bash
 yay -S sax
 ```
-
-To build the latest commit from the `main` branch instead, install
-[`sax-git`](https://aur.archlinux.org/packages/sax-git):
-
-```bash
-yay -S sax-git
-```
-
-VCS package updates require development-package checking, for example
-`yay -Syu --devel`.
 
 ### From crates.io
 
@@ -42,13 +32,10 @@ cargo install sax
 
 ## Usage
 
-Arguments are positional: input(s) come first and the output is always last. When
-the output is omitted, sax prompts for it.
-
 #### Extracting archives
 
 ```bash
-sax <archive> <out>
+sax archive.tzst out/
 ```
 
 Extracts the contents of an archive into the output directory, creating it if needed.
@@ -56,7 +43,7 @@ Extracts the contents of an archive into the output directory, creating it if ne
 #### Archiving files and directories
 
 ```bash
-sax <input>... <archive>
+sax folder/ file.txt ... archive.tzst
 ```
 
 Creates an archive containing one or more input files or directories, creating
@@ -70,6 +57,12 @@ sax stores configuration in `~/.config/sax/config.yaml` by default, or
 - `extract_prefs.strip_top_level_dir`: controls whether sax removes a single
   top-level directory from an archive before extracting into the output
   directory. Defaults to `true`.
+- `extract_prefs.output_mode`: controls how the extraction output directory is
+  selected. Defaults to `prompt`.
+  - `auto`: derives a directory beside the archive from its name.
+  - `prompt`: uses an output directory argument when provided, otherwise asks
+    interactively.
+  - `manual`: requires an output directory argument.
 
 ### Optional flags
 
