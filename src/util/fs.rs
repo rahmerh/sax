@@ -143,6 +143,7 @@ pub fn is_archive(path: &Path) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use kernal::prelude::*;
     use tempfile::TempDir;
 
     use super::*;
@@ -172,7 +173,7 @@ mod tests {
         for (name, expected) in archive_types {
             let actual = detect_archive_type(Path::new(name)).unwrap();
 
-            assert_eq!(actual, expected);
+            assert_that!(actual).is_equal_to(expected);
         }
     }
 
@@ -185,7 +186,7 @@ mod tests {
         let actual = is_archive(path);
 
         // Assert
-        assert!(actual);
+        assert_that!(actual).is_true();
     }
 
     #[test]
@@ -197,7 +198,7 @@ mod tests {
         let actual = is_archive(path);
 
         // Assert
-        assert!(!actual);
+        assert_that!(actual).is_false();
     }
 
     #[test]
@@ -216,12 +217,9 @@ mod tests {
         move_dir_contents(&source, &out).unwrap();
 
         // Assert
-        assert_eq!(fs::read_to_string(out.join("root.txt")).unwrap(), "hello");
-        assert_eq!(
-            fs::read_to_string(out.join("nested/inner.txt")).unwrap(),
-            "world"
-        );
-        assert!(fs::read_dir(&source).unwrap().next().is_none());
+        assert_that!(out.join("root.txt")).is_file_with_content("hello");
+        assert_that!(out.join("nested/inner.txt")).is_file_with_content("world");
+        assert_that!(source).is_empty_dir();
     }
 
     #[test]
@@ -241,15 +239,9 @@ mod tests {
         move_dir_contents(&source, &out).unwrap();
 
         // Assert
-        assert_eq!(
-            fs::read_to_string(out.join("root.txt")).unwrap(),
-            "new file"
-        );
-        assert_eq!(
-            fs::read_to_string(out.join("nested/inner.txt")).unwrap(),
-            "new nested"
-        );
-        assert!(!out.join("nested/old.txt").exists());
+        assert_that!(out.join("root.txt")).is_file_with_content("new file");
+        assert_that!(out.join("nested/inner.txt")).is_file_with_content("new nested");
+        assert_that!(out.join("nested/old.txt")).does_not_exist();
     }
 
     #[test]
@@ -263,7 +255,7 @@ mod tests {
         remove_existing_path(&path).unwrap();
 
         // Assert
-        assert!(!path.exists());
+        assert_that!(path).does_not_exist();
     }
 
     #[test]
@@ -278,7 +270,7 @@ mod tests {
         remove_existing_path(&path).unwrap();
 
         // Assert
-        assert!(!path.exists());
+        assert_that!(path).does_not_exist();
     }
 
     #[test]
@@ -291,7 +283,7 @@ mod tests {
         let actual = remove_existing_path(&path);
 
         // Assert
-        assert!(actual.is_ok());
+        assert_that!(actual).is_ok();
     }
 
     #[test]
@@ -305,7 +297,7 @@ mod tests {
         write_file_from_reader(&path, 0o644, &mut input).unwrap();
 
         // Assert
-        assert_eq!(fs::read_to_string(path).unwrap(), "hello");
+        assert_that!(path).is_file_with_content("hello");
     }
 
     #[cfg(unix)]
@@ -320,10 +312,7 @@ mod tests {
         write_file_from_reader(&path, 0o600, &mut input).unwrap();
 
         // Assert
-        assert_eq!(
-            fs::metadata(path).unwrap().permissions().mode() & 0o777,
-            0o600
-        );
+        assert_that!(fs::metadata(path).unwrap().permissions().mode() & 0o777).is_equal_to(0o600);
     }
 
     #[cfg(unix)]
@@ -338,10 +327,7 @@ mod tests {
         set_permissions(&path, 0o100755).unwrap();
 
         // Assert
-        assert_eq!(
-            fs::metadata(path).unwrap().permissions().mode() & 0o777,
-            0o755
-        );
+        assert_that!(fs::metadata(path).unwrap().permissions().mode() & 0o777).is_equal_to(0o755);
     }
 
     #[test]
@@ -354,8 +340,7 @@ mod tests {
         let actual = safe_join(&base, &empty);
 
         // Assert
-        assert!(actual.is_err());
-        assert!(matches!(actual.err().unwrap(), UnsafePathError::Empty))
+        assert_that!(matches!(actual.unwrap_err(), UnsafePathError::Empty)).is_true();
     }
 
     #[test]
@@ -368,8 +353,7 @@ mod tests {
         let actual = safe_join(&base, &empty);
 
         // Assert
-        assert!(actual.is_err());
-        assert!(matches!(actual.err().unwrap(), UnsafePathError::Absolute))
+        assert_that!(matches!(actual.unwrap_err(), UnsafePathError::Absolute)).is_true();
     }
 
     #[test]
@@ -382,8 +366,7 @@ mod tests {
         let actual = safe_join(&base, &empty);
 
         // Assert
-        assert!(actual.is_err());
-        assert!(matches!(actual.err().unwrap(), UnsafePathError::Traversal));
+        assert_that!(matches!(actual.unwrap_err(), UnsafePathError::Traversal)).is_true();
     }
 
     #[test]
@@ -396,7 +379,7 @@ mod tests {
         let actual = safe_join(&base, &empty).unwrap();
 
         // Assert
-        assert_eq!(actual, PathBuf::from("/tmp/foo/bar"))
+        assert_that!(actual).is_equal_to(PathBuf::from("/tmp/foo/bar"));
     }
 
     #[test]
@@ -410,7 +393,7 @@ mod tests {
         let actual = single_child_dir_or_self(dir.path()).unwrap();
 
         // Assert
-        assert_eq!(actual, child);
+        assert_that!(actual).is_equal_to(child);
     }
 
     #[test]
@@ -424,7 +407,7 @@ mod tests {
         let actual = single_child_dir_or_self(dir.path()).unwrap();
 
         // Assert
-        assert_eq!(actual, dir.path());
+        assert_that!(actual).is_equal_to(dir.path().to_path_buf());
     }
 
     #[test]
@@ -437,6 +420,6 @@ mod tests {
         let actual = single_child_dir_or_self(dir.path()).unwrap();
 
         // Assert
-        assert_eq!(actual, dir.path());
+        assert_that!(actual).is_equal_to(dir.path().to_path_buf());
     }
 }

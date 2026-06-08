@@ -25,6 +25,7 @@ zip = "7.2.0"
 zstd = "0.13.3"
 
 [dev-dependencies]
+kernal = "0.5.1"
 mockall = "0.13.1"
 sha1 = "0.10.6"
 tempfile = "3.27.0"

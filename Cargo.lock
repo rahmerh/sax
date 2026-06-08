@@ -578,6 +578,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "kernal"
+version = "0.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7020daa389200ced42013be339801724a4cc07bc32a759bbd3515348215e3571"
+
+[[package]]
 name = "leb128fmt"
 version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -879,6 +885,7 @@ dependencies = [
  "dialoguer",
  "flate2",
  "itertools",
+ "kernal",
  "mockall",
  "serde",
  "serde_yaml",

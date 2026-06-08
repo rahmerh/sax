@@ -210,6 +210,7 @@ mod tests {
     use crate::util::prompt::MockPrompt;
 
     use super::*;
+    use kernal::prelude::*;
     use mockall::predicate::eq;
     use std::fs::File;
     use tempfile::TempDir;
@@ -224,7 +225,7 @@ mod tests {
         let actual = parse_action(input, &prompt);
 
         // Assert
-        assert!(matches!(actual.unwrap_err(), AppError::InvalidArgs(_)));
+        assert_that!(matches!(actual.unwrap_err(), AppError::InvalidArgs(_))).is_true();
     }
 
     #[test]
@@ -242,7 +243,9 @@ mod tests {
         let actual = parse_action(vec![archive.clone()], &prompt);
 
         // Assert
-        assert_eq!(actual.unwrap(), Action::Extract { archive, out });
+        assert_that!(actual)
+            .to_value()
+            .is_equal_to(Action::Extract { archive, out });
     }
 
     #[test]
@@ -260,7 +263,7 @@ mod tests {
         );
 
         // Assert
-        assert!(matches!(actual.unwrap_err(), AppError::InvalidArgs(_)));
+        assert_that!(matches!(actual.unwrap_err(), AppError::InvalidArgs(_))).is_true();
     }
 
     #[test]
@@ -277,10 +280,11 @@ mod tests {
         let actual = parse_action(vec![archive, input], &prompt);
 
         // Assert
-        assert!(matches!(
+        assert_that!(matches!(
             actual.unwrap_err(),
             AppError::NotFolder { path: _ }
-        ));
+        ))
+        .is_true();
     }
 
     #[test]
@@ -296,7 +300,9 @@ mod tests {
         let actual = parse_action(vec![archive.clone(), out.clone()], &prompt);
 
         // Assert
-        assert_eq!(actual.unwrap(), Action::Extract { archive, out });
+        assert_that!(actual)
+            .to_value()
+            .is_equal_to(Action::Extract { archive, out });
     }
 
     #[test]
@@ -317,13 +323,10 @@ mod tests {
         let actual = parse_action(vec![input.clone()], &prompt);
 
         // Assert
-        assert_eq!(
-            actual.unwrap(),
-            Action::Create {
-                inputs: vec![input],
-                archive: out
-            }
-        );
+        assert_that!(actual).to_value().is_equal_to(Action::Create {
+            inputs: vec![input],
+            archive: out,
+        });
     }
 
     #[test]
@@ -341,10 +344,11 @@ mod tests {
         let actual = parse_action(vec![input, second_input, out], &prompt);
 
         // Assert
-        assert!(matches!(
+        assert_that!(matches!(
             actual.unwrap_err(),
             AppError::InputDoesNotExist { path: _ }
-        ));
+        ))
+        .is_true();
     }
 
     #[test]
@@ -368,13 +372,10 @@ mod tests {
         let actual = parse_action(vec![input.clone(), second_input.clone()], &prompt);
 
         // Assert
-        assert_eq!(
-            actual.unwrap(),
-            Action::Create {
-                inputs: vec![input, second_input],
-                archive: out,
-            }
-        );
+        assert_that!(actual).to_value().is_equal_to(Action::Create {
+            inputs: vec![input, second_input],
+            archive: out,
+        });
     }
 
     #[test]
@@ -398,13 +399,10 @@ mod tests {
         let actual = parse_action(vec![input.clone(), second_input.clone()], &prompt);
 
         // Assert
-        assert_eq!(
-            actual.unwrap(),
-            Action::Create {
-                inputs: vec![input, second_input],
-                archive: out,
-            }
-        );
+        assert_that!(actual).to_value().is_equal_to(Action::Create {
+            inputs: vec![input, second_input],
+            archive: out,
+        });
     }
 
     #[test]
@@ -426,12 +424,9 @@ mod tests {
         );
 
         // Assert
-        assert_eq!(
-            actual.unwrap(),
-            Action::Create {
-                inputs: vec![input, second_input],
-                archive: out
-            }
-        );
+        assert_that!(actual).to_value().is_equal_to(Action::Create {
+            inputs: vec![input, second_input],
+            archive: out,
+        });
     }
 }

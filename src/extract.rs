@@ -197,6 +197,7 @@ mod tests {
     use super::*;
     use flate2::Compression;
     use flate2::write::GzEncoder;
+    use kernal::prelude::*;
     use sha1::{Digest, Sha1};
     use std::io::Write;
     use tempfile::TempDir;
@@ -229,16 +230,9 @@ mod tests {
         .unwrap();
 
         // Assert
-        assert_eq!(
-            fs::read_to_string(out_dir.join("root.txt")).unwrap(),
-            "hello"
-        );
-
-        assert!(out_dir.join("nested").is_dir());
-        assert_eq!(
-            fs::read_to_string(out_dir.join("nested/inner.txt")).unwrap(),
-            "world"
-        );
+        assert_that!(out_dir.join("root.txt")).is_file_with_content("hello");
+        assert_that!(out_dir.join("nested")).is_dir();
+        assert_that!(out_dir.join("nested/inner.txt")).is_file_with_content("world");
     }
 
     #[test]
@@ -264,16 +258,9 @@ mod tests {
         .unwrap();
 
         // Assert
-        assert_eq!(
-            fs::read_to_string(out_dir.join("root.txt")).unwrap(),
-            "hello"
-        );
-
-        assert!(out_dir.join("nested").is_dir());
-        assert_eq!(
-            fs::read_to_string(out_dir.join("nested/inner.txt")).unwrap(),
-            "world"
-        );
+        assert_that!(out_dir.join("root.txt")).is_file_with_content("hello");
+        assert_that!(out_dir.join("nested")).is_dir();
+        assert_that!(out_dir.join("nested/inner.txt")).is_file_with_content("world");
     }
 
     #[test]
@@ -301,16 +288,9 @@ mod tests {
         .unwrap();
 
         // Assert
-        assert_eq!(
-            fs::read_to_string(out_dir.join("root.txt")).unwrap(),
-            "hello"
-        );
-
-        assert!(out_dir.join("nested").is_dir());
-        assert_eq!(
-            fs::read_to_string(out_dir.join("nested/inner.txt")).unwrap(),
-            "world"
-        );
+        assert_that!(out_dir.join("root.txt")).is_file_with_content("hello");
+        assert_that!(out_dir.join("nested")).is_dir();
+        assert_that!(out_dir.join("nested/inner.txt")).is_file_with_content("world");
     }
 
     #[test]
@@ -339,15 +319,9 @@ mod tests {
         .unwrap();
 
         // Assert
-        assert_eq!(
-            fs::read_to_string(out_dir.join("root.txt")).unwrap(),
-            "hello"
-        );
-        assert_eq!(
-            fs::read_to_string(out_dir.join("nested/inner.txt")).unwrap(),
-            "world"
-        );
-        assert!(!out_dir.join("package").exists());
+        assert_that!(out_dir.join("root.txt")).is_file_with_content("hello");
+        assert_that!(out_dir.join("nested/inner.txt")).is_file_with_content("world");
+        assert_that!(out_dir.join("package")).does_not_exist();
     }
 
     #[test]
@@ -376,14 +350,8 @@ mod tests {
         .unwrap();
 
         // Assert
-        assert_eq!(
-            fs::read_to_string(out_dir.join("package/root.txt")).unwrap(),
-            "hello"
-        );
-        assert_eq!(
-            fs::read_to_string(out_dir.join("package/nested/inner.txt")).unwrap(),
-            "world"
-        );
+        assert_that!(out_dir.join("package/root.txt")).is_file_with_content("hello");
+        assert_that!(out_dir.join("package/nested/inner.txt")).is_file_with_content("world");
     }
 
     #[test]
@@ -412,16 +380,9 @@ mod tests {
         .unwrap();
 
         // Assert
-        assert_eq!(
-            fs::read_to_string(out_dir.join("root.txt")).unwrap(),
-            "hello"
-        );
-
-        assert!(out_dir.join("nested").is_dir());
-        assert_eq!(
-            fs::read_to_string(out_dir.join("nested/inner.txt")).unwrap(),
-            "world"
-        );
+        assert_that!(out_dir.join("root.txt")).is_file_with_content("hello");
+        assert_that!(out_dir.join("nested")).is_dir();
+        assert_that!(out_dir.join("nested/inner.txt")).is_file_with_content("world");
     }
 
     #[test]
@@ -447,10 +408,8 @@ mod tests {
         // Assert
         let actual = fs::read(out_dir.join("test.txt")).unwrap();
         let digest = Sha1::digest(&actual);
-        assert_eq!(
-            format!("{digest:x}"),
-            "4da7f88f69b44a3fdb705667019a65f4c6e058a3"
-        );
+        assert_that!(format!("{digest:x}"))
+            .is_equal_to("4da7f88f69b44a3fdb705667019a65f4c6e058a3".to_owned());
     }
 
     fn create_zip(path: &Path, entries: &[(&str, &str)]) {
