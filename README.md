@@ -17,12 +17,22 @@ tbz2, tar.zst, tzst, and 7z archives. RAR archives can only be extracted.
 
 ### From the AUR
 
-Arch users can install the [`sax-git`](https://aur.archlinux.org/packages/sax-git)
+Arch users can install the stable [`sax`](https://aur.archlinux.org/packages/sax)
 package with an AUR helper such as [`yay`](https://github.com/Jguer/yay):
+
+```bash
+yay -S sax
+```
+
+To build the latest commit from the `main` branch instead, install
+[`sax-git`](https://aur.archlinux.org/packages/sax-git):
 
 ```bash
 yay -S sax-git
 ```
+
+VCS package updates require development-package checking, for example
+`yay -Syu --devel`.
 
 ### From crates.io
 
