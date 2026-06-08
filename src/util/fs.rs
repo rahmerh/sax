@@ -29,18 +29,18 @@ pub enum ArchiveType {
 }
 
 const ARCHIVE_SUFFIXES: [(&str, ArchiveType); 12] = [
-    ("tar.bz2", ArchiveType::TarBz2),
-    ("tar.zst", ArchiveType::TarZst),
-    ("tar.gz", ArchiveType::TarGz),
-    ("tar.xz", ArchiveType::TarXz),
-    ("tbz2", ArchiveType::TarBz2),
-    ("tzst", ArchiveType::TarZst),
-    ("zip", ArchiveType::Zip),
-    ("tar", ArchiveType::Tar),
-    ("tgz", ArchiveType::TarGz),
-    ("txz", ArchiveType::TarXz),
-    ("7z", ArchiveType::SevenZip),
-    ("rar", ArchiveType::Rar),
+    (".tar.bz2", ArchiveType::TarBz2),
+    (".tar.zst", ArchiveType::TarZst),
+    (".tar.gz", ArchiveType::TarGz),
+    (".tar.xz", ArchiveType::TarXz),
+    (".tbz2", ArchiveType::TarBz2),
+    (".tzst", ArchiveType::TarZst),
+    (".zip", ArchiveType::Zip),
+    (".tar", ArchiveType::Tar),
+    (".tgz", ArchiveType::TarGz),
+    (".txz", ArchiveType::TarXz),
+    (".7z", ArchiveType::SevenZip),
+    (".rar", ArchiveType::Rar),
 ];
 
 #[derive(Debug, Error)]
@@ -138,7 +138,11 @@ pub fn detect_archive_type(path: &Path) -> Result<ArchiveType, DetectArchiveType
 
     ARCHIVE_SUFFIXES
         .iter()
-        .find(|(suffix, _)| lowercase_name.ends_with(suffix))
+        .find(|(suffix, _)| {
+            lowercase_name
+                .strip_suffix(suffix)
+                .is_some_and(|stem| !stem.is_empty())
+        })
         .map(|(_, archive_type)| *archive_type)
         .ok_or_else(|| DetectArchiveTypeError {
             path: path.to_path_buf(),
@@ -155,7 +159,7 @@ pub fn archive_stem(path: &Path) -> Option<&str> {
     let (suffix, _) = ARCHIVE_SUFFIXES
         .iter()
         .find(|(suffix, _)| lowercase_name.ends_with(suffix))?;
-    let stem = name.get(..name.len() - suffix.len())?.strip_suffix('.')?;
+    let stem = name.get(..name.len() - suffix.len())?;
 
     (!stem.is_empty()).then_some(stem)
 }
