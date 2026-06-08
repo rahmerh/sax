@@ -32,6 +32,14 @@ jobs:
 
       - name: Install stable Rust
         uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - name: Check formatting
+        run: cargo fmt -- --check
+
+      - name: Lint
+        run: cargo clippy --locked -- -D warnings
 
       - name: Test
         run: cargo test --locked
