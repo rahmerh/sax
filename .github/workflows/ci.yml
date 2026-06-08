@@ -35,6 +35,9 @@ jobs:
         with:
           components: clippy, rustfmt
 
+      - name: Restore Rust build cache
+        uses: Swatinem/rust-cache@v2
+
       - name: Check formatting
         run: cargo fmt -- --check
 
