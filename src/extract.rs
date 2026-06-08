@@ -14,7 +14,7 @@ use zstd::stream::read::Decoder as ZstdDecoder;
 
 use crate::util::fs::{
     ArchiveType, DetectArchiveTypeError, UnsafePathError, detect_archive_type, move_dir_contents,
-    safe_join, set_permissions, single_child_dir_or_self, write_file_from_reader,
+    safe_join, set_permissions, try_get_only_child_dir, write_file_from_reader,
 };
 
 #[derive(Debug, Error)]
@@ -76,12 +76,16 @@ pub fn extract_archive(path: &Path, out: &Path, prefs: &ExtractPrefs) -> Result<
 
         extract_archive_to(path, &staging_dir)?;
 
-        let source_dir = single_child_dir_or_self(&staging_dir).map_err(|source| {
-            ExtractError::ReadOutputDir {
+        let single_entry =
+            try_get_only_child_dir(&staging_dir).map_err(|source| ExtractError::ReadOutputDir {
                 path: staging_dir.to_path_buf(),
                 source,
-            }
-        })?;
+            })?;
+
+        let source_dir = match single_entry {
+            Some(value) => value,
+            None => staging_dir.clone(),
+        };
 
         move_dir_contents(&source_dir, out).map_err(|source| ExtractError::MoveStagedFiles {
             path: source_dir,
