@@ -4,10 +4,9 @@ use std::path::PathBuf;
 
 use anyhow::{Context, Result, anyhow};
 use serde::Deserialize;
+use serde::Serialize;
 
-const DEFAULT_CONFIG: &str = "create_prefs: {}\nextract_prefs:\n  strip_top_level_dir: true\n";
-
-#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(default)]
 #[derive(Default)]
 pub struct Config {
@@ -15,20 +14,30 @@ pub struct Config {
     pub extract_prefs: ExtractPrefs,
 }
 
-#[derive(Debug, Clone, Copy, Deserialize, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Default, PartialEq, Eq)]
 #[serde(default)]
 pub struct CreatePrefs {}
 
-#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(default)]
 pub struct ExtractPrefs {
     pub strip_top_level_dir: bool,
+    pub output_mode: OutputModes,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum OutputModes {
+    Auto,
+    Prompt,
+    Manual,
 }
 
 impl Default for ExtractPrefs {
     fn default() -> Self {
         Self {
             strip_top_level_dir: true,
+            output_mode: OutputModes::Prompt,
         }
     }
 }
@@ -44,7 +53,8 @@ impl Config {
                 })?;
             }
 
-            fs::write(&path, DEFAULT_CONFIG)
+            let default_config = Config::default();
+            fs::write(&path, serde_yaml::to_string(&default_config)?)
                 .with_context(|| format!("failed to write config {}", path.display()))?;
             return Ok(Self::default());
         }

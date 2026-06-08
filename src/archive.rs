@@ -208,7 +208,10 @@ mod tests {
     use kernal::prelude::*;
     use tempfile::TempDir;
 
-    use crate::{config::ExtractPrefs, extract::extract_archive};
+    use crate::{
+        config::{ExtractPrefs, OutputModes},
+        extract::extract_archive,
+    };
 
     use super::*;
 
@@ -256,6 +259,7 @@ mod tests {
             &extracted_dir,
             &ExtractPrefs {
                 strip_top_level_dir: false,
+                output_mode: OutputModes::Manual,
             },
         )
         .unwrap();
@@ -287,6 +291,7 @@ mod tests {
             &extracted_dir,
             &ExtractPrefs {
                 strip_top_level_dir: false,
+                output_mode: OutputModes::Manual,
             },
         )
         .unwrap();
@@ -318,6 +323,7 @@ mod tests {
             &extracted,
             &ExtractPrefs {
                 strip_top_level_dir: false,
+                output_mode: OutputModes::Manual,
             },
         )
         .unwrap();
@@ -349,6 +355,7 @@ mod tests {
             &extracted_dir,
             &ExtractPrefs {
                 strip_top_level_dir: false,
+                output_mode: OutputModes::Manual,
             },
         )
         .unwrap();
@@ -380,6 +387,7 @@ mod tests {
             &extracted_dir,
             &ExtractPrefs {
                 strip_top_level_dir: false,
+                output_mode: OutputModes::Manual,
             },
         )
         .unwrap();
@@ -411,6 +419,7 @@ mod tests {
             &extracted,
             &ExtractPrefs {
                 strip_top_level_dir: false,
+                output_mode: OutputModes::Manual,
             },
         )
         .unwrap();
@@ -442,6 +451,7 @@ mod tests {
             &extracted,
             &ExtractPrefs {
                 strip_top_level_dir: false,
+                output_mode: OutputModes::Manual,
             },
         )
         .unwrap();
