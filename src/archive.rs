@@ -1,5 +1,5 @@
 use std::fs::{self, File};
-use std::io::{self, Write};
+use std::io::{self, Read, Write};
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
@@ -14,6 +14,7 @@ use zip::write::SimpleFileOptions;
 use zstd::stream::write::Encoder as ZstdEncoder;
 
 use crate::config::CreatePrefs;
+use crate::progress::{NoProgress, ProgressReporter};
 use crate::util::fs::{ArchiveType, DetectArchiveTypeError, detect_archive_type};
 
 #[derive(Debug, Error)]
@@ -34,10 +35,21 @@ pub enum ArchiveError {
     SevenZip(#[from] sevenz_rust::Error),
 }
 
+#[cfg_attr(not(test), allow(dead_code))]
 pub fn create_archive(
     inputs: Vec<&Path>,
     out: &Path,
+    prefs: &CreatePrefs,
+) -> Result<(), ArchiveError> {
+    let mut progress = NoProgress;
+    create_archive_with_progress(inputs, out, prefs, &mut progress)
+}
+
+pub fn create_archive_with_progress(
+    inputs: Vec<&Path>,
+    out: &Path,
     _prefs: &CreatePrefs,
+    progress: &mut dyn ProgressReporter,
 ) -> Result<(), ArchiveError> {
     let archive_type = detect_archive_type(out)?;
 
@@ -45,28 +57,69 @@ pub fn create_archive(
         return Err(ArchiveError::UnsupportedCreation { format: "RAR" });
     }
 
+    let total = total_input_bytes(&inputs)?;
+
     if let Some(parent) = out.parent().filter(|parent| !parent.as_os_str().is_empty()) {
         fs::create_dir_all(parent)?;
     }
 
-    match archive_type {
-        ArchiveType::Zip => create_zip(&inputs, out),
-        ArchiveType::Tar => create_tar_file(&inputs, out),
-        ArchiveType::TarGz => create_tar_gz(&inputs, out),
-        ArchiveType::TarXz => create_tar_xz(&inputs, out),
-        ArchiveType::TarBz2 => create_tar_bz2(&inputs, out),
-        ArchiveType::TarZst => create_tar_zst(&inputs, out),
-        ArchiveType::SevenZip => create_7z(&inputs, out),
+    progress.start("Archiving", Some(total));
+
+    let result = match archive_type {
+        ArchiveType::Zip => create_zip(&inputs, out, progress),
+        ArchiveType::Tar => create_tar_file(&inputs, out, progress),
+        ArchiveType::TarGz => create_tar_gz(&inputs, out, progress),
+        ArchiveType::TarXz => create_tar_xz(&inputs, out, progress),
+        ArchiveType::TarBz2 => create_tar_bz2(&inputs, out, progress),
+        ArchiveType::TarZst => create_tar_zst(&inputs, out, progress),
+        ArchiveType::SevenZip => create_7z(&inputs, out, progress),
         ArchiveType::Rar => unreachable!("RAR creation was rejected before creating output"),
+    };
+
+    progress.finish();
+    result
+}
+
+fn total_input_bytes(inputs: &[&Path]) -> Result<u64, ArchiveError> {
+    let mut total = 0;
+
+    for input in inputs {
+        total += total_path_bytes(input)?;
+    }
+
+    Ok(total)
+}
+
+fn total_path_bytes(path: &Path) -> Result<u64, ArchiveError> {
+    let metadata = fs::symlink_metadata(path)?;
+
+    if metadata.is_dir() {
+        let mut total = 0;
+
+        for entry in fs::read_dir(path)? {
+            total += total_path_bytes(&entry?.path())?;
+        }
+
+        Ok(total)
+    } else if metadata.is_file() {
+        Ok(metadata.len())
+    } else {
+        Err(ArchiveError::UnsupportedInputType {
+            path: path.to_path_buf(),
+        })
     }
 }
 
-fn create_zip(inputs: &[&Path], out: &Path) -> Result<(), ArchiveError> {
+fn create_zip(
+    inputs: &[&Path],
+    out: &Path,
+    progress: &mut dyn ProgressReporter,
+) -> Result<(), ArchiveError> {
     let mut archive = zip::ZipWriter::new(File::create(out)?);
 
     for input in inputs {
         let name = input_name(input)?;
-        append_zip_path(&mut archive, input, &name)?;
+        append_zip_path(&mut archive, input, &name, progress)?;
     }
 
     archive.finish()?;
@@ -77,11 +130,14 @@ fn append_zip_path(
     archive: &mut zip::ZipWriter<File>,
     source: &Path,
     archive_path: &Path,
+    progress: &mut dyn ProgressReporter,
 ) -> Result<(), ArchiveError> {
     let metadata = fs::symlink_metadata(source)?;
     let options = SimpleFileOptions::default()
         .compression_method(zip::CompressionMethod::Deflated)
         .unix_permissions(metadata.permissions().mode());
+
+    progress.set_message(archive_path.display().to_string());
 
     if metadata.is_dir() {
         archive.add_directory_from_path(archive_path, options)?;
@@ -92,11 +148,12 @@ fn append_zip_path(
                 archive,
                 &entry.path(),
                 &archive_path.join(entry.file_name()),
+                progress,
             )?;
         }
     } else if metadata.is_file() {
         archive.start_file_from_path(archive_path, options)?;
-        io::copy(&mut File::open(source)?, archive)?;
+        copy_with_progress(File::open(source)?, archive, progress)?;
     } else {
         return Err(ArchiveError::UnsupportedInputType {
             path: source.to_path_buf(),
@@ -106,58 +163,119 @@ fn append_zip_path(
     Ok(())
 }
 
-fn create_tar_file(inputs: &[&Path], out: &Path) -> Result<(), ArchiveError> {
-    create_tar(inputs, File::create(out)?)?;
+fn create_tar_file(
+    inputs: &[&Path],
+    out: &Path,
+    progress: &mut dyn ProgressReporter,
+) -> Result<(), ArchiveError> {
+    create_tar(inputs, File::create(out)?, progress)?;
     Ok(())
 }
 
-fn create_tar_gz(inputs: &[&Path], out: &Path) -> Result<(), ArchiveError> {
+fn create_tar_gz(
+    inputs: &[&Path],
+    out: &Path,
+    progress: &mut dyn ProgressReporter,
+) -> Result<(), ArchiveError> {
     let encoder = GzEncoder::new(File::create(out)?, GzCompression::default());
-    create_tar(inputs, encoder)?.finish()?;
+    create_tar(inputs, encoder, progress)?.finish()?;
     Ok(())
 }
 
-fn create_tar_xz(inputs: &[&Path], out: &Path) -> Result<(), ArchiveError> {
+fn create_tar_xz(
+    inputs: &[&Path],
+    out: &Path,
+    progress: &mut dyn ProgressReporter,
+) -> Result<(), ArchiveError> {
     let encoder = XzEncoder::new(File::create(out)?, 6);
-    create_tar(inputs, encoder)?.finish()?;
+    create_tar(inputs, encoder, progress)?.finish()?;
     Ok(())
 }
 
-fn create_tar_bz2(inputs: &[&Path], out: &Path) -> Result<(), ArchiveError> {
+fn create_tar_bz2(
+    inputs: &[&Path],
+    out: &Path,
+    progress: &mut dyn ProgressReporter,
+) -> Result<(), ArchiveError> {
     let encoder = BzEncoder::new(File::create(out)?, BzCompression::default());
-    create_tar(inputs, encoder)?.finish()?;
+    create_tar(inputs, encoder, progress)?.finish()?;
     Ok(())
 }
 
-fn create_tar_zst(inputs: &[&Path], out: &Path) -> Result<(), ArchiveError> {
+fn create_tar_zst(
+    inputs: &[&Path],
+    out: &Path,
+    progress: &mut dyn ProgressReporter,
+) -> Result<(), ArchiveError> {
     let encoder = ZstdEncoder::new(File::create(out)?, 0)?;
-    create_tar(inputs, encoder)?.finish()?;
+    create_tar(inputs, encoder, progress)?.finish()?;
     Ok(())
 }
 
-fn create_tar<W: Write>(inputs: &[&Path], writer: W) -> Result<W, ArchiveError> {
+fn create_tar<W: Write>(
+    inputs: &[&Path],
+    writer: W,
+    progress: &mut dyn ProgressReporter,
+) -> Result<W, ArchiveError> {
     let mut archive = tar::Builder::new(writer);
     archive.follow_symlinks(false);
 
     for input in inputs {
         let name = input_name(input)?;
-
-        if input.is_dir() {
-            archive.append_dir_all(&name, input)?;
-        } else {
-            archive.append_path_with_name(input, &name)?;
-        }
+        append_tar_path(&mut archive, input, &name, progress)?;
     }
 
     Ok(archive.into_inner()?)
 }
 
-fn create_7z(inputs: &[&Path], out: &Path) -> Result<(), ArchiveError> {
+fn append_tar_path<W: Write>(
+    archive: &mut tar::Builder<W>,
+    source: &Path,
+    archive_path: &Path,
+    progress: &mut dyn ProgressReporter,
+) -> Result<(), ArchiveError> {
+    let metadata = fs::symlink_metadata(source)?;
+    progress.set_message(archive_path.display().to_string());
+
+    if metadata.is_dir() {
+        archive.append_dir(archive_path, source)?;
+
+        for entry in fs::read_dir(source)? {
+            let entry = entry?;
+            append_tar_path(
+                archive,
+                &entry.path(),
+                &archive_path.join(entry.file_name()),
+                progress,
+            )?;
+        }
+    } else if metadata.is_file() {
+        let mut header = tar::Header::new_gnu();
+        header.set_metadata(&metadata);
+        header.set_path(archive_path)?;
+        header.set_cksum();
+
+        let mut reader = ProgressRead::new(File::open(source)?, progress);
+        archive.append(&header, &mut reader)?;
+    } else {
+        return Err(ArchiveError::UnsupportedInputType {
+            path: source.to_path_buf(),
+        });
+    }
+
+    Ok(())
+}
+
+fn create_7z(
+    inputs: &[&Path],
+    out: &Path,
+    progress: &mut dyn ProgressReporter,
+) -> Result<(), ArchiveError> {
     let mut archive = SevenZWriter::create(out)?;
 
     for input in inputs {
         let name = input_name(input)?;
-        append_7z_path(&mut archive, input, &name)?;
+        append_7z_path(&mut archive, input, &name, progress)?;
     }
 
     archive.finish()?;
@@ -168,10 +286,13 @@ fn append_7z_path(
     archive: &mut SevenZWriter<File>,
     source: &Path,
     archive_path: &Path,
+    progress: &mut dyn ProgressReporter,
 ) -> Result<(), ArchiveError> {
     let metadata = fs::symlink_metadata(source)?;
     let name = archive_path.to_string_lossy().replace('\\', "/");
     let entry = SevenZArchiveEntry::from_path(source, name);
+
+    progress.set_message(archive_path.display().to_string());
 
     if metadata.is_dir() {
         archive.push_archive_entry::<&[u8]>(entry, None)?;
@@ -182,10 +303,12 @@ fn append_7z_path(
                 archive,
                 &child.path(),
                 &archive_path.join(child.file_name()),
+                progress,
             )?;
         }
     } else if metadata.is_file() {
-        archive.push_archive_entry(entry, Some(File::open(source)?))?;
+        let reader = ProgressRead::new(File::open(source)?, progress);
+        archive.push_archive_entry(entry, Some(reader))?;
     } else {
         return Err(ArchiveError::UnsupportedInputType {
             path: source.to_path_buf(),
@@ -193,6 +316,38 @@ fn append_7z_path(
     }
 
     Ok(())
+}
+
+fn copy_with_progress<R: Read, W: Write>(
+    reader: R,
+    writer: &mut W,
+    progress: &mut dyn ProgressReporter,
+) -> io::Result<u64> {
+    let mut reader = ProgressRead::new(reader, progress);
+    io::copy(&mut reader, writer)
+}
+
+struct ProgressRead<'a, R> {
+    inner: R,
+    progress: &'a mut dyn ProgressReporter,
+}
+
+impl<'a, R> ProgressRead<'a, R> {
+    fn new(inner: R, progress: &'a mut dyn ProgressReporter) -> Self {
+        Self { inner, progress }
+    }
+}
+
+impl<R: Read> Read for ProgressRead<'_, R> {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        let bytes = self.inner.read(buf)?;
+
+        if bytes > 0 {
+            self.progress.inc(bytes as u64);
+        }
+
+        Ok(bytes)
+    }
 }
 
 fn input_name(path: &Path) -> Result<PathBuf, ArchiveError> {
@@ -215,6 +370,29 @@ mod tests {
 
     use super::*;
 
+    #[derive(Default)]
+    struct RecordingProgress {
+        started: Option<(&'static str, Option<u64>)>,
+        bytes: u64,
+        finished: bool,
+    }
+
+    impl ProgressReporter for RecordingProgress {
+        fn start(&mut self, action: &'static str, total: Option<u64>) {
+            self.started = Some((action, total));
+        }
+
+        fn set_message(&mut self, _message: String) {}
+
+        fn inc(&mut self, bytes: u64) {
+            self.bytes += bytes;
+        }
+
+        fn finish(&mut self) {
+            self.finished = true;
+        }
+    }
+
     #[test]
     fn create_archive_should_return_err_when_trying_to_archive_as_rar() {
         // Arrange
@@ -233,6 +411,31 @@ mod tests {
             ArchiveError::UnsupportedCreation { format: "RAR" }
         ))
         .is_true();
+    }
+
+    #[test]
+    fn create_archive_with_progress_should_report_input_bytes() {
+        // Arrange
+        let temp_dir = TempDir::new().unwrap();
+
+        let input_dir = temp_dir.path().join("input");
+        let nested_dir = input_dir.join("nested");
+        fs::create_dir_all(&nested_dir).unwrap();
+        fs::write(input_dir.join("root.txt"), "foo").unwrap();
+        fs::write(nested_dir.join("inner.txt"), "hello").unwrap();
+
+        let archive = temp_dir.path().join("out.zip");
+        let prefs = CreatePrefs {};
+        let mut progress = RecordingProgress::default();
+
+        // Act
+        create_archive_with_progress(vec![input_dir.as_path()], &archive, &prefs, &mut progress)
+            .unwrap();
+
+        // Assert
+        assert_that!(progress.started).is_equal_to(Some(("Archiving", Some(8))));
+        assert_that!(progress.bytes).is_equal_to(8);
+        assert_that!(progress.finished).is_true();
     }
 
     #[test]

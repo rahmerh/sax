@@ -7,9 +7,10 @@ use clap::{CommandFactory, Parser};
 use itertools::Itertools;
 use thiserror::Error;
 
-use crate::archive::{ArchiveError, create_archive};
+use crate::archive::{ArchiveError, create_archive_with_progress};
 use crate::config::{Config, ExtractPrefs, OutputModes};
-use crate::extract::{ExtractError, extract_archive};
+use crate::extract::{ExtractError, extract_archive_with_progress};
+use crate::progress::TerminalProgress;
 use crate::util::fs::{archive_stem, is_archive};
 use crate::util::prompt::{Prompt, Prompter};
 
@@ -103,22 +104,27 @@ impl Cli {
 
         match action {
             Action::Extract { archive, out } => {
-                extract_archive(&archive, &out, &config.extract_prefs).map_err(|source| {
-                    AppError::Extract {
+                let mut progress = TerminalProgress::stderr();
+                extract_archive_with_progress(&archive, &out, &config.extract_prefs, &mut *progress)
+                    .map_err(|source| AppError::Extract {
                         archive: archive.to_path_buf(),
                         out: out.to_path_buf(),
                         source,
-                    }
-                })
+                    })
             }
             Action::Create { inputs, archive } => {
                 let input_paths: Vec<&Path> = inputs.iter().map(|i| i.as_path()).unique().collect();
 
-                create_archive(input_paths, &archive, &config.create_prefs).map_err(|source| {
-                    AppError::Archive {
-                        out: archive.to_path_buf(),
-                        source,
-                    }
+                let mut progress = TerminalProgress::stderr();
+                create_archive_with_progress(
+                    input_paths,
+                    &archive,
+                    &config.create_prefs,
+                    &mut *progress,
+                )
+                .map_err(|source| AppError::Archive {
+                    out: archive.to_path_buf(),
+                    source,
                 })
             }
         }

@@ -7,14 +7,16 @@ use bzip2::read::BzDecoder;
 use flate2::read::GzDecoder;
 use tar::EntryType;
 use thiserror::Error;
+use unrar_ng::{ExtractEvent, ExtractStatus};
 
 use crate::config::ExtractPrefs;
+use crate::progress::{NoProgress, ProgressReporter};
 use xz2::read::XzDecoder;
 use zstd::stream::read::Decoder as ZstdDecoder;
 
 use crate::util::fs::{
     ArchiveType, DetectArchiveTypeError, UnsafePathError, detect_archive_type, move_dir_contents,
-    safe_join, set_permissions, try_get_only_child_dir, write_file_from_reader,
+    safe_join, set_permissions, try_get_only_child_dir,
 };
 
 #[derive(Debug, Error)]
@@ -56,7 +58,18 @@ pub enum ExtractError {
     Rar(#[from] unrar_ng::error::UnrarError),
 }
 
+#[cfg_attr(not(test), allow(dead_code))]
 pub fn extract_archive(path: &Path, out: &Path, prefs: &ExtractPrefs) -> Result<(), ExtractError> {
+    let mut progress = NoProgress;
+    extract_archive_with_progress(path, out, prefs, &mut progress)
+}
+
+pub fn extract_archive_with_progress(
+    path: &Path,
+    out: &Path,
+    prefs: &ExtractPrefs,
+    progress: &mut dyn ProgressReporter,
+) -> Result<(), ExtractError> {
     fs::create_dir_all(out).map_err(|source| ExtractError::CreateOutputDir {
         path: out.to_path_buf(),
         source,
@@ -74,7 +87,7 @@ pub fn extract_archive(path: &Path, out: &Path, prefs: &ExtractPrefs) -> Result<
             source,
         })?;
 
-        extract_archive_to(path, &staging_dir)?;
+        extract_archive_to(path, &staging_dir, progress)?;
 
         let single_entry =
             try_get_only_child_dir(&staging_dir).map_err(|source| ExtractError::ReadOutputDir {
@@ -96,26 +109,40 @@ pub fn extract_archive(path: &Path, out: &Path, prefs: &ExtractPrefs) -> Result<
 
         Ok(())
     } else {
-        extract_archive_to(path, out)
+        extract_archive_to(path, out, progress)
     }
 }
 
-fn extract_archive_to(path: &Path, out: &Path) -> Result<(), ExtractError> {
-    match detect_archive_type(path)? {
-        ArchiveType::Zip => extract_zip(path, out),
-        ArchiveType::Tar => extract_tar(File::open(path)?, out),
-        ArchiveType::TarGz => extract_tar(GzDecoder::new(File::open(path)?), out),
-        ArchiveType::TarXz => extract_tar(XzDecoder::new(File::open(path)?), out),
-        ArchiveType::TarBz2 => extract_tar(BzDecoder::new(File::open(path)?), out),
-        ArchiveType::TarZst => extract_tar(ZstdDecoder::new(File::open(path)?)?, out),
-        ArchiveType::SevenZip => extract_7z(path, out),
-        ArchiveType::Rar => extract_rar(path, out),
-    }
+fn extract_archive_to(
+    path: &Path,
+    out: &Path,
+    progress: &mut dyn ProgressReporter,
+) -> Result<(), ExtractError> {
+    let result = match detect_archive_type(path)? {
+        ArchiveType::Zip => extract_zip(path, out, progress),
+        ArchiveType::Tar => extract_tar(File::open(path)?, out, progress),
+        ArchiveType::TarGz => extract_tar(GzDecoder::new(File::open(path)?), out, progress),
+        ArchiveType::TarXz => extract_tar(XzDecoder::new(File::open(path)?), out, progress),
+        ArchiveType::TarBz2 => extract_tar(BzDecoder::new(File::open(path)?), out, progress),
+        ArchiveType::TarZst => extract_tar(ZstdDecoder::new(File::open(path)?)?, out, progress),
+        ArchiveType::SevenZip => extract_7z(path, out, progress),
+        ArchiveType::Rar => extract_rar(path, out, progress),
+    };
+
+    progress.finish();
+    result
 }
 
-fn extract_zip(path: &Path, out: &Path) -> Result<(), ExtractError> {
+fn extract_zip(
+    path: &Path,
+    out: &Path,
+    progress: &mut dyn ProgressReporter,
+) -> Result<(), ExtractError> {
     let file = File::open(path)?;
     let mut archive = zip::ZipArchive::new(file)?;
+    let total = zip_total_uncompressed_size(&mut archive)?;
+
+    progress.start("Extracting", Some(total));
 
     for index in 0..archive.len() {
         let mut entry = archive.by_index(index)?;
@@ -141,17 +168,39 @@ fn extract_zip(path: &Path, out: &Path) -> Result<(), ExtractError> {
         }
 
         let mode = entry.unix_mode().unwrap_or(0o644);
-        write_file_from_reader(&out_path, mode, &mut entry)?;
+        progress.set_message(entry.name().to_string());
+        write_file_from_reader_with_progress(&out_path, mode, &mut entry, progress)?;
     }
 
     Ok(())
 }
 
-fn extract_tar<R>(reader: R, out: &Path) -> Result<(), ExtractError>
+fn zip_total_uncompressed_size<R: Read + io::Seek>(
+    archive: &mut zip::ZipArchive<R>,
+) -> Result<u64, ExtractError> {
+    let mut total = 0;
+
+    for index in 0..archive.len() {
+        let entry = archive.by_index(index)?;
+
+        if entry.is_file() {
+            total += entry.size();
+        }
+    }
+
+    Ok(total)
+}
+
+fn extract_tar<R>(
+    reader: R,
+    out: &Path,
+    progress: &mut dyn ProgressReporter,
+) -> Result<(), ExtractError>
 where
     R: Read,
 {
     let mut archive = tar::Archive::new(reader);
+    progress.start("Extracting", None);
 
     for entry in archive.entries()? {
         let mut entry = entry?;
@@ -175,7 +224,8 @@ where
                     fs::create_dir_all(parent)?;
                 }
 
-                write_file_from_reader(&out_path, mode, &mut entry)?;
+                progress.set_message(entry_path.display().to_string());
+                write_file_from_reader_with_progress(&out_path, mode, &mut entry, progress)?;
             }
             _ => {}
         }
@@ -184,16 +234,100 @@ where
     Ok(())
 }
 
-fn extract_7z(path: &Path, out: &Path) -> Result<(), ExtractError> {
-    sevenz_rust::decompress_file(path, out)?;
+fn extract_7z(
+    path: &Path,
+    out: &Path,
+    progress: &mut dyn ProgressReporter,
+) -> Result<(), ExtractError> {
+    progress.start("Extracting", None);
+
+    sevenz_rust::decompress_file_with_extract_fn(path, out, |entry, reader, dest| {
+        progress.set_message(entry.name().to_string());
+
+        if entry.is_directory() {
+            fs::create_dir_all(dest).map_err(sevenz_rust::Error::io)?;
+        } else {
+            if let Some(parent) = dest.parent() {
+                fs::create_dir_all(parent).map_err(sevenz_rust::Error::io)?;
+            }
+
+            let file = File::create(dest).map_err(sevenz_rust::Error::io)?;
+            let mut reader = ProgressRead::new(reader, progress);
+            io::copy(&mut reader, &mut io::BufWriter::new(file)).map_err(sevenz_rust::Error::io)?;
+        }
+
+        Ok(true)
+    })?;
+
     Ok(())
 }
 
-fn extract_rar(path: &Path, out: &Path) -> Result<(), ExtractError> {
-    unrar_ng::Archive::new(path)
+fn extract_rar(
+    path: &Path,
+    out: &Path,
+    progress: &mut dyn ProgressReporter,
+) -> Result<(), ExtractError> {
+    progress.start("Extracting", None);
+
+    let status = unrar_ng::Archive::new(path)
         .open_for_processing()?
-        .extract_all(out)?;
+        .extract_all_with_callback(out, |event| {
+            match event {
+                ExtractEvent::Start { filename, .. } => {
+                    progress.set_message(filename.display().to_string());
+                }
+                ExtractEvent::Ok { size, .. } => progress.inc(size),
+                ExtractEvent::Err { filename, .. } => {
+                    progress.set_message(filename.display().to_string());
+                }
+                ExtractEvent::LargeDictWarning { .. } => {}
+                _ => {}
+            }
+
+            true
+        })?;
+
+    if status == ExtractStatus::Cancelled {
+        progress.finish();
+    }
+
     Ok(())
+}
+
+fn write_file_from_reader_with_progress(
+    path: &Path,
+    mode: u32,
+    reader: &mut dyn Read,
+    progress: &mut dyn ProgressReporter,
+) -> io::Result<()> {
+    let mut file = File::create(path)?;
+    let mut reader = ProgressRead::new(reader, progress);
+    io::copy(&mut reader, &mut file)?;
+    set_permissions(path, mode)?;
+    Ok(())
+}
+
+struct ProgressRead<'a, R: ?Sized> {
+    inner: &'a mut R,
+    progress: &'a mut dyn ProgressReporter,
+}
+
+impl<'a, R: ?Sized> ProgressRead<'a, R> {
+    fn new(inner: &'a mut R, progress: &'a mut dyn ProgressReporter) -> Self {
+        Self { inner, progress }
+    }
+}
+
+impl<R: Read + ?Sized> Read for ProgressRead<'_, R> {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        let bytes = self.inner.read(buf)?;
+
+        if bytes > 0 {
+            self.progress.inc(bytes as u64);
+        }
+
+        Ok(bytes)
+    }
 }
 
 #[cfg(test)]
@@ -208,6 +342,29 @@ mod tests {
     use std::io::Write;
     use tempfile::TempDir;
     use zip::write::SimpleFileOptions;
+
+    #[derive(Default)]
+    struct RecordingProgress {
+        started: Option<(&'static str, Option<u64>)>,
+        bytes: u64,
+        finished: bool,
+    }
+
+    impl ProgressReporter for RecordingProgress {
+        fn start(&mut self, action: &'static str, total: Option<u64>) {
+            self.started = Some((action, total));
+        }
+
+        fn set_message(&mut self, _message: String) {}
+
+        fn inc(&mut self, bytes: u64) {
+            self.bytes += bytes;
+        }
+
+        fn finish(&mut self) {
+            self.finished = true;
+        }
+    }
 
     #[test]
     fn extract_archive_should_extract_zip_into_output_directory() {
@@ -240,6 +397,68 @@ mod tests {
         assert_that!(out_dir.join("root.txt")).is_file_with_content("hello");
         assert_that!(out_dir.join("nested")).is_dir();
         assert_that!(out_dir.join("nested/inner.txt")).is_file_with_content("world");
+    }
+
+    #[test]
+    fn extract_archive_with_progress_should_report_zip_uncompressed_bytes() {
+        // Arrange
+        let dir = TempDir::new().unwrap();
+        let archive_path = dir.path().join("a.zip");
+        let out_dir = dir.path().join("out");
+        let mut progress = RecordingProgress::default();
+
+        create_zip(
+            &archive_path,
+            &[("root.txt", "hello"), ("nested/inner.txt", "world")],
+        );
+
+        // Act
+        extract_archive_with_progress(
+            &archive_path,
+            &out_dir,
+            &ExtractPrefs {
+                strip_top_level_dir: false,
+                output_mode: OutputModes::Manual,
+            },
+            &mut progress,
+        )
+        .unwrap();
+
+        // Assert
+        assert_that!(progress.started).is_equal_to(Some(("Extracting", Some(10))));
+        assert_that!(progress.bytes).is_equal_to(10);
+        assert_that!(progress.finished).is_true();
+    }
+
+    #[test]
+    fn extract_archive_with_progress_should_report_tar_bytes_without_total() {
+        // Arrange
+        let dir = TempDir::new().unwrap();
+        let archive_path = dir.path().join("a.tar");
+        let out_dir = dir.path().join("out");
+        let mut progress = RecordingProgress::default();
+
+        create_tar(
+            &archive_path,
+            &[("root.txt", "hello"), ("nested/inner.txt", "world")],
+        );
+
+        // Act
+        extract_archive_with_progress(
+            &archive_path,
+            &out_dir,
+            &ExtractPrefs {
+                strip_top_level_dir: false,
+                output_mode: OutputModes::Manual,
+            },
+            &mut progress,
+        )
+        .unwrap();
+
+        // Assert
+        assert_that!(progress.started).is_equal_to(Some(("Extracting", None)));
+        assert_that!(progress.bytes).is_equal_to(10);
+        assert_that!(progress.finished).is_true();
     }
 
     #[test]

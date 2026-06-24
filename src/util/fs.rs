@@ -1,5 +1,5 @@
 use std::fs;
-use std::io::{self, Read};
+use std::io::{self};
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Component, Path, PathBuf};
@@ -107,13 +107,6 @@ pub fn safe_join(base: &Path, rel: &Path) -> Result<PathBuf, UnsafePathError> {
     }
 
     Ok(base.join(clean))
-}
-
-pub fn write_file_from_reader(path: &Path, mode: u32, reader: &mut dyn Read) -> io::Result<()> {
-    let mut file = fs::File::create(path)?;
-    io::copy(reader, &mut file)?;
-    set_permissions(path, mode)?;
-    Ok(())
 }
 
 pub fn set_permissions(path: &Path, mode: u32) -> io::Result<()> {

@@ -8,6 +8,7 @@ mod archive;
 mod cli;
 mod config;
 mod extract;
+mod progress;
 mod theme;
 mod util;
 
