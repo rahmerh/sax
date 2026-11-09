@@ -1,0 +1,29 @@
+# Runs on every push. A branch other than main must be rebased onto main and
+# hold no merge commits, the rule pull requests were held to on GitHub.
+image: archlinux
+packages:
+  - rust
+sources:
+  - https://git.sr.ht/~rahmerh/sax
+tasks:
+  - rebased: |
+      cd sax
+      case "${GIT_REF:-}" in
+        refs/heads/main|refs/tags/*) exit 0 ;;
+      esac
+      git fetch -q origin main
+      git merge-base --is-ancestor FETCH_HEAD HEAD
+
+      if git rev-list --min-parents=2 "FETCH_HEAD..HEAD" | grep -q .; then
+        echo "Branches must not contain merge commits."
+        exit 1
+      fi
+  - fmt: |
+      cd sax
+      cargo fmt -- --check
+  - lint: |
+      cd sax
+      cargo clippy --locked -- -D warnings
+  - test: |
+      cd sax
+      cargo test --locked

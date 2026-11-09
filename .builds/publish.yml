@@ -1,0 +1,66 @@
+# Publishes a v*.*.* tag to crates.io and the stable AUR package.
+# builds.sr.ht has no tag filter, so the first task ends the build unless the
+# push was a release tag.
+image: archlinux
+packages:
+  - jq
+  - openssh
+  - rust
+sources:
+  - https://git.sr.ht/~rahmerh/sax
+secrets:
+  - 23a611fd-d783-4850-8da5-2637674763bb # ~/.cargo/credentials.toml
+  - 32053845-4007-472a-a57e-c59ea2fd3a32 # ~/.ssh/aur
+tasks:
+  - release-tag: |
+      case "${GIT_REF:-}" in
+        refs/tags/v[0-9]*.[0-9]*.[0-9]*) ;;
+        *) echo "Not a release tag (${GIT_REF:-none}), nothing to publish"; complete-build ;;
+      esac
+      echo "RELEASE_TAG=${GIT_REF#refs/tags/}" >> ~/.buildenv
+  - verify: |
+      cd sax
+      cargo_version="$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[0].version')"
+      tag_version="${RELEASE_TAG#v}"
+
+      if [ "$cargo_version" != "$tag_version" ]; then
+        echo "Tag version v$tag_version does not match Cargo.toml version $cargo_version"
+        exit 1
+      fi
+  - test: |
+      cd sax
+      cargo test --locked
+  - publish-crate: |
+      cd sax
+      cargo publish --locked
+  - configure-aur: |
+      ssh-keyscan aur.archlinux.org >> ~/.ssh/known_hosts
+      cat >> ~/.ssh/config <<'EOF'
+      Host aur.archlinux.org
+        User aur
+        IdentityFile ~/.ssh/aur
+        IdentitiesOnly yes
+      EOF
+  - publish-aur: |
+      pkgver="${RELEASE_TAG#v}"
+      curl -fsSL "https://git.sr.ht/~rahmerh/sax/archive/$RELEASE_TAG.tar.gz" -o release.tar.gz
+      sha256="$(sha256sum release.tar.gz | cut -d ' ' -f1)"
+
+      git clone ssh://aur@aur.archlinux.org/sax.git aur-repo
+      cp sax/packaging/aur/sax/PKGBUILD aur-repo/PKGBUILD
+      sed -i "s/^pkgver=.*/pkgver=$pkgver/" aur-repo/PKGBUILD
+      sed -i "s/^sha256sums=.*/sha256sums=('$sha256')/" aur-repo/PKGBUILD
+
+      cd aur-repo
+      makepkg --printsrcinfo > .SRCINFO
+      git config user.name "rahmerh"
+      git config user.email "basbouwhuis@protonmail.com"
+      git add PKGBUILD .SRCINFO
+
+      if git diff --cached --quiet; then
+        echo "AUR package is already up to date."
+        exit 0
+      fi
+
+      git commit -m "Update sax to $RELEASE_TAG"
+      git push

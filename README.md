@@ -2,7 +2,7 @@
 
 ![License](https://img.shields.io/crates/l/sax)
 [![Crates.io](https://img.shields.io/crates/v/sax)](https://crates.io/crates/sax)
-[![Publish crate](https://github.com/rahmerh/sax/actions/workflows/publish.yml/badge.svg)](https://github.com/rahmerh/sax/actions/workflows/publish.yml)
+[![builds.sr.ht status](https://builds.sr.ht/~rahmerh/sax/commits/main.svg)](https://builds.sr.ht/~rahmerh/sax/commits/main)
 
 A simple but smart archiving and extraction tool.
 
