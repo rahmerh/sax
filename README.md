@@ -1,6 +1,6 @@
 # `sax` 🎷
 
-![License](https://img.shields.io/github/license/rahmerh/sax)
+![License](https://img.shields.io/crates/l/sax)
 [![Crates.io](https://img.shields.io/crates/v/sax)](https://crates.io/crates/sax)
 [![Publish crate](https://github.com/rahmerh/sax/actions/workflows/publish.yml/badge.svg)](https://github.com/rahmerh/sax/actions/workflows/publish.yml)
 

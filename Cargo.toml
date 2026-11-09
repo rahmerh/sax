@@ -4,7 +4,7 @@ version = "1.0.0"
 edition = "2024"
 description = "A simple but smart archiving and extraction tool."
 license = "MIT"
-repository = "https://github.com/rahmerh/sax"
+repository = "https://git.sr.ht/~rahmerh/sax"
 readme = "README.md"
 
 [dependencies]
