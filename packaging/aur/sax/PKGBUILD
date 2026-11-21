@@ -17,6 +17,7 @@ sha256sums=('31f0e028ba97c0ffecacccdf9c2dd4c3a194126ddd8ee4f855c629add9421f6c')
 prepare() {
   cd "$pkgname-$pkgver"
 
+  bash packaging/set-version.sh "$pkgver"
   cargo fetch --locked --target "$CARCH-unknown-linux-gnu"
 }
 

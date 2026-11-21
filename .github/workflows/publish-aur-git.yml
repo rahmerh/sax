@@ -42,8 +42,8 @@ jobs:
 
       - name: Prepare development package
         run: |
-          cargo_version="$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[0].version')"
-          pkgver="${cargo_version}.r$(git rev-list --count HEAD).g$(git rev-parse --short=7 HEAD)"
+          pkgver="$(git describe --long --tags --match 'v[0-9]*.[0-9]*.[0-9]*' --abbrev=7 \
+            | sed 's/^v//; s/-\([0-9]*\)-g/.r\1.g/')"
 
           git clone ssh://aur@aur.archlinux.org/sax-git.git aur-repo
           cp packaging/aur/sax-git/PKGBUILD aur-repo/PKGBUILD

@@ -1,9 +1,10 @@
 name: CI
 
 on:
-  pull_request:
+  push:
     branches:
       - main
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -14,21 +15,8 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout pull request branch
+      - name: Checkout
         uses: actions/checkout@v6
-        with:
-          ref: ${{ github.event.pull_request.head.sha }}
-          fetch-depth: 0
-
-      - name: Verify branch is rebased onto main
-        run: |
-          git fetch origin "$GITHUB_BASE_REF"
-          git merge-base --is-ancestor "origin/$GITHUB_BASE_REF" HEAD
-
-          if git rev-list --min-parents=2 "origin/$GITHUB_BASE_REF..HEAD" | grep -q .; then
-            echo "Pull request branches must not contain merge commits."
-            exit 1
-          fi
 
       - name: Install stable Rust
         uses: dtolnay/rust-toolchain@stable

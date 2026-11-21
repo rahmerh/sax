@@ -11,7 +11,7 @@ update that file in the same commit. They describe sax as it is now, not its his
 
 - `docs/cli.md`: how arguments pick extract or create, output modes, prompts, the config file, error messages
 - `docs/archives.md`: supported formats and detection, how each is extracted and created, top-level stripping, path safety, permissions, symlinks
-- `docs/release.md`: CI checks, branch rules, cutting a release, crates.io and AUR publishing
+- `docs/release.md`: CI, how versions come from tags, cutting a release, crates.io and AUR publishing, secrets
 
 ## Stack
 
@@ -25,7 +25,8 @@ update that file in the same commit. They describe sax as it is now, not its his
 - Nothing extracted may land outside the output directory: new extract code goes through `safe_join`
   (`src/util/fs.rs`).
 - Never overwrite an existing archive when creating one.
-- CI must stay green: `cargo fmt`, `cargo clippy -D warnings` and `cargo test`, all `--locked`. CI only runs on pull requests, so run them before pushing to `main`.
+- CI must stay green: `cargo fmt`, `cargo clippy -D warnings` and `cargo test`, all `--locked`. All work goes straight to `main` and CI runs after the push, so run them before pushing.
+- Never bump the version in `Cargo.toml`: it stays `0.0.0`, and a release is just a `vX.Y.Z` tag on `main` (`docs/release.md`).
 - README.md is the user-facing page (crates.io and the repo show it). Keep its format list and config
   section in line with `docs/`.
 
