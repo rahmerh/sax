@@ -4,6 +4,8 @@
 [![Crates.io](https://img.shields.io/crates/v/sax)](https://crates.io/crates/sax)
 [![Publish crate](https://github.com/rahmerh/sax/actions/workflows/publish.yml/badge.svg)](https://github.com/rahmerh/sax/actions/workflows/publish.yml)
 
+<img src="https://img.shields.io/badge/%F0%9F%A4%96_100%25_AI_generated-tested_%26_used_by_a_human-8957e5?style=for-the-badge" alt="100% AI generated, tested and used by a human">
+
 A simple but smart archiving and extraction tool.
 
 Will automatically detect archive type and extract correctly, you no longer need to look up tar flags.
