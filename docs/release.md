@@ -5,8 +5,11 @@ Code: `.github/workflows/`, `packaging/aur/`, `Cargo.toml`
 
 ## Where it lives
 - Repo and CI: GitHub, `https://github.com/rahmerh/sax`, GitHub Actions on `ubuntu-latest`.
-- Repo secrets the workflows need: `CARGO_REGISTRY_TOKEN` (crates.io), `AUR_SSH_PRIVATE_KEY` (AUR account
-  `rahmerh`; the key's source is Proton Pass, served locally through its SSH agent).
+- Repo secrets the workflows need, both kept in Proton Pass (vault Personal):
+  - `CARGO_REGISTRY_TOKEN`: item "Crates.io github actions token" (field API Key, scope publish-update
+    for `sax`, has an expiry date). An expired token fails `publish-crate` with `403 Forbidden`.
+  - `AUR_SSH_PRIVATE_KEY`: item "AUR" (SSH key for AUR account `rahmerh`, also served locally through the
+    Proton Pass SSH agent).
 
 ## CI (`.github/workflows/ci.yml`, pull requests into `main`)
 - The branch must be rebased onto `main` and hold no merge commits.
