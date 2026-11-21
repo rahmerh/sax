@@ -1,8 +1,8 @@
 # `sax` 🎷
 
-![License](https://img.shields.io/crates/l/sax)
+![License](https://img.shields.io/github/license/rahmerh/sax)
 [![Crates.io](https://img.shields.io/crates/v/sax)](https://crates.io/crates/sax)
-[![builds.sr.ht status](https://builds.sr.ht/~rahmerh/sax/commits/main.svg)](https://builds.sr.ht/~rahmerh/sax/commits/main)
+[![Publish crate](https://github.com/rahmerh/sax/actions/workflows/publish.yml/badge.svg)](https://github.com/rahmerh/sax/actions/workflows/publish.yml)
 
 A simple but smart archiving and extraction tool.
 
